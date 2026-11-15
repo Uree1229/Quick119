@@ -152,8 +152,10 @@
 <section id="hospitalImportantEvents" class="workflow-events" aria-label="선택 환자 중요 사건" hidden></section>
 <section id="hospitalReviews" class="review-alerts" aria-label="임상변경 검토 대기" hidden></section>
 
+<section id="inquiryAlerts" class="inq-alerts" aria-label="새 수용 문의 알림" aria-live="polite" hidden></section>
+
 <nav class="workspace-tabs" aria-label="업무 선택">
-  <button type="button" class="active" data-tab="inquiries">수용 문의</button>
+  <button type="button" class="active" data-tab="inquiries">수용 문의 <span class="count" id="inquiryBadge" title="대기 중인 문의" hidden>0</span></button>
   <button type="button" data-tab="incoming">도착 예정 · 이송 대화 <span class="count" id="chatPendingBadge" title="전송 결과를 확인하지 못한 메시지" hidden>0</span></button>
   <button type="button" data-tab="resources">병원 자원</button>
   <button type="button" data-tab="restrictions">수용 제한</button>
@@ -223,6 +225,7 @@ const questionDrafts = new Map(), inquiryNotices = new Map();
 let busy = false;
 const seen = new Set();          // 이미 본 문의 id (새 문의 표시용)
 const newUntil = new Map();      // id -> 새 문의 표시 종료 시각
+let inquiryAlerts = null;        // 어느 탭에서든 보이는 새 문의 알림 (inquiry-alerts.mjs)
 let firstLoad = true;
 let lastSig = '';
 let activeTab = 'inquiries', polling = false, contextVersion = 0;
@@ -411,6 +414,7 @@ async function poll() {
       seen.add(q.id);
     }
     firstLoad = false;
+    if (inquiryAlerts?.sync(data.open)) renderInquiryAlerts();
     $('conn').textContent = '마지막 갱신 ' + new Date().toLocaleTimeString('ko-KR') + ' · 3초마다 자동 갱신';
     $('conn').className = '';
     if (changed) render();
@@ -484,9 +488,24 @@ function syncWorkflow({events=false,restore=false}={}) {
   if(events||changed)workflow.refresh({restore:restore||changed});
 }
 
+function renderInquiryAlerts() {
+  const items = inquiryAlerts ? inquiryAlerts.list() : [];
+  $('inquiryAlerts').hidden = !items.length;
+  $('inquiryAlerts').innerHTML = items.length ? inquiryAlerts.alertsMarkup(items, { esc, severity: severityTag }) : '';
+}
+function selectInquiry(id) {
+  selectedId = id; declineReason = null; declineOpen = false;
+  const key = inquiryKey(selectedId), saved = inquiryNotices.get(key);
+  inquiryNotices.delete(key);
+  notice(saved ? saved.text : '', !!saved?.isErr);
+  if (inquiryAlerts?.dismiss(id)) renderInquiryAlerts();
+  render();
+}
+
 function render() {
   const open = data.open;
   $('openCount').textContent = open.length;
+  $('inquiryBadge').textContent = open.length; $('inquiryBadge').hidden = !open.length;
   document.title = (open.length ? `(${open.length}) ` : '') + '병원용 웹 · 수용 문의';
 
   $('openList').innerHTML = open.length ? open.map((q) => {
@@ -880,11 +899,20 @@ $('restrictionDetail').addEventListener('click',e=>{const clear=e.target.closest
 $('chatForm').addEventListener('submit',sendChat);
 $('openList').addEventListener('click', (e) => {
   const card = e.target.closest('[data-id]');
-  if (!card) return;
-  selectedId = Number(card.dataset.id); declineReason = null; declineOpen = false;
-  const key = inquiryKey(selectedId), saved = inquiryNotices.get(key);
-  inquiryNotices.delete(key);
-  notice(saved ? saved.text : '', !!saved?.isErr); render();
+  if (card) selectInquiry(Number(card.dataset.id));
+});
+$('inquiryAlerts').addEventListener('click', (e) => {
+  const view = e.target.closest('[data-alert-view]'), dismiss = e.target.closest('[data-alert-dismiss]');
+  if (view) {
+    const id = Number(view.dataset.alertView);
+    if (activeTab !== 'inquiries') setTab('inquiries');
+    selectInquiry(id);
+    $('detail').scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+  } else if (dismiss) {
+    if (inquiryAlerts?.dismiss(Number(dismiss.dataset.alertDismiss))) renderInquiryAlerts();
+  } else if (e.target.closest('[data-alert-view-all]')) {
+    setTab('inquiries');
+  }
 });
 $('detail').addEventListener('input', (e) => {
   if (e.target.id !== 'questionInput') return;
@@ -922,6 +950,7 @@ function resetWorkspace(){
   contextVersion++;selectedId=null;selectedPatientId=null;selectedPatient=null;landingPatientId=null;
   workflowPatient=null;
   seen.clear();newUntil.clear();firstLoad=true;lastSig='';incomingSig='';resourceSig='';
+  inquiryAlerts?.reset();renderInquiryAlerts();
   data={open:[],recent:[]};incomingData={incoming:[],affected:[],planning:[]};hospitalData=null;
   questionDrafts.clear();inquiryNotices.clear();reviewDrafts.clear();externalDraft={resource_type:null,amount:'1',note:''};restrictionDraft={scope:'all',reason:'',duration:'3600',note:''};resetChat();
   reviewSeq++;reviewLoading=false;reviewState={key:null,pending:[],error:'',truncated:false,checkedAt:''};
@@ -960,6 +989,11 @@ setInterval(() => {
 }, 1000);
 
 renderHospitalContext();
+import('./inquiry-alerts.mjs').then(({InquiryAlerts,alertsMarkup})=>{
+  inquiryAlerts=Object.assign(new InquiryAlerts(),{alertsMarkup});
+  if(!firstLoad)inquiryAlerts.sync(data.open);                        // 이미 화면에 있는 문의를 기준선으로 삼는다
+  renderInquiryAlerts();
+}).catch(error=>notice('새 문의 알림 도구를 불러오지 못했습니다. '+error.message,true));
 import('./review-discovery.mjs').then(module=>{reviewDiscovery=module;pollReviews();})
   .catch(error=>notice('임상변경 검토 목록 도구를 불러오지 못했습니다. '+error.message,true));
 import('./chat-recovery.mjs').then(({ChatRecoveryStore,ChatSaveError,newChatRequest,isRejected,confirmsChatRequest})=>{
