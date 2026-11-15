@@ -12,8 +12,19 @@ export class InquiryAlerts {
     // 첫 조회는 기준선이다. 페이지를 열 때 이미 있던 문의는 목록에서 보이므로 알리지 않는다.
     if (this.known !== null) {
       for (const q of open) {
-        if (!this.known.has(q.id)) { this.items.set(q.id, q); changed = true; }
-        else if (this.items.has(q.id)) this.items.set(q.id, q);
+        if (!this.known.has(q.id)) {
+          this.items.set(q.id, q);
+          changed = true;
+          continue;
+        }
+        const previous = this.items.get(q.id);
+        if (!previous) continue;
+        const before = previous.patient, after = q.patient;
+        if (before?.age !== after?.age ||
+            before?.symptoms !== after?.symptoms ||
+            before?.priority_source !== after?.priority_source ||
+            before?.effective_priority !== after?.effective_priority) changed = true;
+        this.items.set(q.id, q);
       }
     }
     // 대기 목록에서 빠진 문의(다른 담당자 응답·만료·취소)의 알림은 남기지 않는다.

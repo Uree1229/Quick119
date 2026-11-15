@@ -113,6 +113,18 @@ test('다른 탭을 보는 중에 새 문의가 오면 알림이 뜨고 문의 �
   assert.equal(page.posts.length,0,'알림은 응답 요청을 보내지 않음');
 });
 
+test('같은 문의의 환자 상태가 바뀌면 보이는 알림과 우선순위를 갱신한다',async()=>{
+  const {page,set}=await open([]);
+  const initial=[1,2,3,4].map(i=>inquiry(i));
+  set(initial);await page.poll();
+  assert.doesNotMatch(page.alerts.innerHTML,/data-alert-id="4"/);
+  const revised=inquiry(4,{},{effective_priority:4,age:68,symptoms:'호흡 곤란'});
+  set([...initial.slice(0,3),revised]);await page.poll();
+  assert.match(page.alerts.innerHTML,/data-alert-id="4"[\s\S]*?긴급[\s\S]*?68세 · 호흡 곤란/);
+  assert.doesNotMatch(page.alerts.innerHTML,/data-alert-id="3"/);
+  assert.equal(page.alerts.innerHTML.match(/data-alert-id="(\d+)"/)[1],'4');
+});
+
 test('닫기는 그 알림만 없애고 문의는 그대로 둔다',async()=>{
   const {page,set}=await open([]);
   set([inquiry(1),inquiry(2)]);await page.poll();
