@@ -184,9 +184,12 @@ class Corrector:
         covered = {(s['start'], s['end']) for s in suggestions}
         for start, token in tokens:
             for form, first in heard.items():
-                if token.startswith(form) and not any(a <= start < b for a, b in covered):
+                tail = token[len(form):]
+                # Keep the attested honorific as well as ordinary noun tails.
+                if (token.startswith(form) and (_NOUN_TAIL.fullmatch(tail) or tail == '이신')
+                        and not any(a <= start < b for a, b in covered)):
                     suggestions.append(dict(first, start=start, end=start + len(token), original=token,
-                                            replacement=first['term'] + token[len(form):], repeated=True))
+                                            replacement=first['term'] + tail, repeated=True))
                     covered.add((start, start + len(token)))
         return sorted(suggestions, key=lambda s: s['start'])
 
@@ -271,13 +274,20 @@ def main(argv=None):
     parser.add_argument('--output', required=True, help='교정 사본 JSON (이미 있으면 거부)')
     parser.add_argument('--details', required=True, help='문장별 제안·숫자 표시 JSON (이미 있으면 거부)')
     args = parser.parse_args(argv)
-    for target in (args.output, args.details):
-        if Path(target).exists():
+    output, details_path = Path(args.output), Path(args.details)
+    if output.resolve() == details_path.resolve():
+        parser.error('--output과 --details는 서로 다른 경로여야 합니다.')
+    for target in (output, details_path):
+        if target.exists():
             parser.error(f'{target} 가 이미 있습니다.')
     package = json.loads(Path(args.recordings).read_text(encoding='utf-8'))
     corrected, details = correct_recordings(package)
-    Path(args.output).write_text(json.dumps(corrected, ensure_ascii=False, indent=1), encoding='utf-8')
-    Path(args.details).write_text(json.dumps(details, ensure_ascii=False, indent=1), encoding='utf-8')
+    for target, value in ((output, corrected), (details_path, details)):
+        try:
+            with target.open('x', encoding='utf-8') as stream:
+                json.dump(value, stream, ensure_ascii=False, indent=1)
+        except FileExistsError:
+            parser.error(f'{target} 가 이미 있습니다.')
     print(json.dumps(dict(recordings=len(details), changed=sum(d['original'] != d['corrected'] for d in details),
                           suggestions=sum(len(d['suggestions']) for d in details),
                           numeric_flags=sum(len(d['numeric_flags']) for d in details)), ensure_ascii=False))

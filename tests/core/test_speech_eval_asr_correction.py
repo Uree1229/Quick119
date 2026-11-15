@@ -1,6 +1,9 @@
 """음성 인식문 용어 교정 제안과 숫자 확인 표시의 회귀 검사."""
+import io
 import json
+import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from speech_eval import asr_correction as ac
@@ -80,6 +83,10 @@ class Suggestions(unittest.TestCase):
     def test_same_misheard_word_is_treated_alike_within_one_utterance(self):
         self.assertEqual(self.corrected('흥통이신 흥통 없은'), '흉통이신 흉통 없은')      # 한 곳만 고치면 있음/없음 충돌이 가려진다
         self.assertEqual(self.corrector.suggest('흥통이신 순환기 내 과로'), [])            # 근거가 된 제안이 없으면 그대로 둔다
+
+    def test_same_prefix_in_an_unrelated_word_is_not_changed(self):
+        text = '어제 경연대회 참석. 지금 경연 있음. 물류 유통량 증가. 마비 없고 유통없음.'
+        self.assertEqual(self.corrected(text), '어제 경연대회 참석. 지금 경련 있음. 물류 유통량 증가. 마비 없고 요통없음.')
 
     def test_term_plus_particle_and_ordinary_words_are_not_touched(self):
         self.assertEqual(self.corrector.suggest('혈당이 240이었던 적이 있음'), [])            # 혈당 + 조사
@@ -161,6 +168,36 @@ class RecordingPackage(unittest.TestCase):
         self.assertEqual(package['recordings'][0]['hypothesis'], '흥통 의심')                                  # 원본 불변
         self.assertEqual(details[0]['suggestions'][0]['term'], '흉통')
         self.assertEqual(details[1]['numeric_flags'][0]['candidate'], 89)
+
+
+class RecordingCLI(unittest.TestCase):
+    def test_distinct_files_contain_corrected_package_and_details(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, output, details = (root / name for name in ('source.json', 'corrected.json', 'details.json'))
+            source.write_text(json.dumps({'recordings': []}), encoding='utf-8')
+
+            with redirect_stdout(io.StringIO()):
+                ac.main(['--recordings', str(source), '--output', str(output), '--details', str(details)])
+
+            self.assertEqual(json.loads(output.read_text(encoding='utf-8')), {'recordings': []})
+            self.assertEqual(json.loads(details.read_text(encoding='utf-8')), [])
+
+    def test_rejects_aliased_output_paths_before_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'nested').mkdir()
+            source = root / 'source.json'
+            source.write_text(json.dumps({'recordings': []}), encoding='utf-8')
+            output = root / 'result.json'
+            alias = root / 'nested' / '..' / 'result.json'
+
+            with redirect_stderr(io.StringIO()) as stderr, self.assertRaises(SystemExit) as error:
+                ac.main(['--recordings', str(source), '--output', str(output), '--details', str(alias)])
+
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn('--output', stderr.getvalue())
+            self.assertFalse(output.exists())
 
 
 if __name__ == '__main__':
