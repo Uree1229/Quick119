@@ -110,7 +110,8 @@ def load_vocabulary(path=CATALOG):
 _PARTICLE_START = re.compile(r'[이가은는을를과와도의만에로]')
 # 용어와 한 자모만 다른 흔한 낱말. '이상 없음'을 '외상 없음'으로 바꾸지 않도록 제안에서 뺀다.
 # 저장소 문서의 한국어 문장 약 81만 자(교정이 필요 없는 글)에 제안이 붙은 낱말을 모은 것이며, 완전한 목록이 아니다.
-LOOKALIKES = frozenset(('거절', '구조', '기전', '부족', '이상', '포함'))
+# '의심'은 보고의 상태 표현이다. '흉통 의심'을 '흉통 오심'으로 바꾸면 미확인이 증상 있음으로 뒤집힌다(합성 음성 검증에서 발견).
+LOOKALIKES = frozenset(('거절', '구조', '기전', '부족', '의심', '이상', '포함'))
 
 
 class Corrector:
@@ -218,19 +219,31 @@ class Corrector:
 _SINO_UNIT = dict(zip('일이삼사오육칠팔구', range(1, 10)))
 _NEAR_UNIT = {'고': 9, '규': 9, '리': 2, '니': 2, '렬': 6, '싸': 4, '파': 8, '치': 7}   # 숫자 낱말과 발음이 가까운 글자
 _NATIVE_TENS = {'열': 10, '스물': 20, '서른': 30, '마흔': 40, '쉰': 50, '예순': 60, '일흔': 70, '여든': 80, '아흔': 90}
-# 0으로 끝나는 수 바로 뒤의 한 글자. '90 이상', '80이고'처럼 조사·어미로 이어지는 말은 뺀다.
-_TENS_THEN_HANGUL = re.compile(r'(?<![0-9.])([1-9][0-9]{0,2}(?<=0))([가-힣])(?![상하고며다라었나면니])')
+# 0으로 끝나는 수 바로 뒤의 한 글자. '90 이상', '80이고'처럼 조사·어미로 이어지는 말과 '120사이'(범위)는 뺀다.
+_TENS_THEN_HANGUL = re.compile(r'(?<![0-9.])([1-9][0-9]{0,2}(?<=0))(?!사이)([가-힣])(?![상하고며다라었나면니])')
 _NATIVE_THEN_DIGIT = re.compile(r'(' + '|'.join(sorted(_NATIVE_TENS, key=len, reverse=True)) + r')\s{0,2}([1-9])(?![0-9])')
 _BP_MERGED = re.compile(r'혈압[은는이가]?\s{0,3}([0-9]{4,6})(?![0-9])')
 
 
 _LABEL_LOOKBACK = 16
+# '이'와 '일'은 주격 조사·서술격으로도 쓰인다("80이 나왔어", "90일 때"). 숫자 2·1로 볼 근거가 약하다.
+_PARTICLE_LIKE = frozenset('이일')
+_VALUE_END = re.compile(r'\s*(?:$|[,.!?]|추가|정정|수정)')
+_LABEL_LOOKAHEAD = 12
 
 
 def _after_measurement_label(text, start, labels):
     """수치 바로 앞(같은 구절 안)에 측정 항목 이름이 있는가. '9월 30일', '160사례' 같은 일반 숫자를 걸러 낸다."""
     window = ''.join(re.split(r'[.!?]', text[max(0, start - _LABEL_LOOKBACK):start])[-1].split())
     return any(label in window for label in labels)
+
+
+def _value_ends(text, end, labels):
+    """수치가 여기서 끝나는가: 문장 끝·문장부호, 수정 명령, 다음 측정 항목 이름이 바로 이어진다."""
+    if _VALUE_END.match(text, end):
+        return True
+    following = ''.join(text[end:end + _LABEL_LOOKAHEAD].split())
+    return any(following.startswith(label) for label in labels)
 
 
 def numeric_flags(text, labels=None):
@@ -241,7 +254,9 @@ def numeric_flags(text, labels=None):
     flags = []
     for m in _TENS_THEN_HANGUL.finditer(text):
         unit = _SINO_UNIT.get(m.group(2), _NEAR_UNIT.get(m.group(2)))
-        if unit and _after_measurement_label(text, m.start(), labels):
+        if not unit or not _after_measurement_label(text, m.start(), labels):
+            continue
+        if m.group(2) not in _PARTICLE_LIKE or _value_ends(text, m.end(), labels):
             flags.append(dict(kind='tens_then_unit', start=m.start(), end=m.end(), original=m.group(),
                               candidate=int(m.group(1)) + unit))
     for m in _NATIVE_THEN_DIGIT.finditer(text):
