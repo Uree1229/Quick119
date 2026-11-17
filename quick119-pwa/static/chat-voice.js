@@ -4,7 +4,7 @@
   if (!document.getElementById('transport-workspace')) return;
   const $ = name => document.getElementById('transport-' + name);
   const input = $('message'), start = $('voice-start'), stop = $('voice-stop');
-  const status = $('voice-status'), interim = $('voice-interim');
+  const status = $('voice-status'), interim = $('voice-interim'), root = $('workspace');
   const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
   const available = window.isSecureContext && !!Speech;
   let enabled = false, listening = false, finishing = false, recognition = null, generation = 0;
@@ -15,6 +15,8 @@
     start.disabled = !available || !enabled || listening || document.hidden || $('chat').hidden;
     stop.hidden = !listening;
     stop.disabled = finishing;
+    // Presentation hook for the listening panel; recognition state itself lives only here.
+    if (root) root.dataset.voice = listening ? (finishing ? 'finishing' : 'listening') : available ? 'idle' : 'unavailable';
   }
   function announce() {
     document.dispatchEvent(new CustomEvent('quick119:voice-state', {detail: {listening}}));
@@ -92,7 +94,7 @@
       current.onend = () => {
         if (ticket !== generation) return;
         listening = false; finishing = false; recognition = null; clearInterim();
-        if (!failed) status.textContent = '음성 입력을 마쳤습니다. 초안을 확인하고 메시지 보내기를 눌러 주세요.';
+        if (!failed) status.textContent = '음성 입력을 마쳤습니다. 초안을 확인하고 보내기를 눌러 주세요.';
         announce(); render();
       };
       listening = true; finishing = false; clearInterim(); announce(); render();

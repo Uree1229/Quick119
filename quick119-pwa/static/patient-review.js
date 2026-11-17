@@ -33,7 +33,7 @@
       const state = getState();
       $('patient-info').disabled = !state.patient || busy;
       $('start-search').disabled = !state.patient || !!state.blockedReason || busy;
-      $('search-status').textContent = state.searchStatus || state.blockedReason || '전송한 보고와 환자 정보를 확인한 뒤 병원을 탐색할 수 있습니다.';
+      $('search-status').textContent = state.searchStatus || state.blockedReason || '환자 정보를 최종 확인하면 후보 병원을 찾습니다.';
       if (reviewed) {
         const changed = state.token !== reviewed.token;
         $('review-submit').disabled = busy || !editing || !!state.blockedReason || changed;
@@ -50,6 +50,7 @@
       document.dispatchEvent(new CustomEvent('quick119:before-view', {detail: {view: 'review'}}));
       reviewed = clone({patient: state.patient, reports: state.reports, token: state.token});
       editing = edit && !state.locked; fields.clear();
+      dialog.dataset.mode = editing ? 'edit' : 'view';
       $('review-title').textContent = editing ? '환자 정보 최종 확인 · 병원 탐색' : '환자 정보 · 전송한 보고';
       $('review-note').textContent = editing
         ? '아래 값을 원문과 대조해 확인하세요. 마지막 버튼을 누르면 환자 정보를 저장한 뒤 후보 병원을 조회합니다.'
@@ -63,6 +64,8 @@
         const row = document.createElement('div'), label = document.createElement('dt'), content = document.createElement('dd');
         label.textContent = definition[1];
         content.textContent = value === null || value === '' ? '미확인' : typeof definition[2] === 'object' ? definition[2][value] || value : String(value);
+        row.dataset.empty = String(value === null || value === '');
+        if (definition[2] === 'textarea') row.className = 'transport-review-wide';
         row.append(label, content); saved.append(row);
       }
       const context = document.createElement('div'); context.className = 'transport-review-wide';
@@ -109,6 +112,9 @@
         source.textContent = conflict ? (baseline ? '저장값 유지 · 보고값 충돌, 원문 확인 필요' : '보고값 충돌 · 직접 확인 필요')
           : baseline ? (suggestion !== null && suggestion !== existing ? '저장값 유지 · 보고 추출값과 다름, 원문 확인 필요' : '서버 저장값')
           : suggestion !== null ? '전송한 보고에서 자동 추출 · 확인 필요' : '미확인 · 직접 입력 가능';
+        // Styling hook only: highlights values that need a look against the original report.
+        row.dataset.source = conflict ? 'conflict' : baseline ? (suggestion !== null && suggestion !== existing ? 'differs' : 'saved')
+          : suggestion !== null ? 'extracted' : 'empty';
         row.append(label, field, source); $('review-fields').append(row);
       }
       $('review-raw').textContent = '원문 추출 참고: 나이 ' + (combined.age || '미확인') + ' · 성별 ' + (combined.sex || '미확인')

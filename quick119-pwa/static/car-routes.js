@@ -23,6 +23,10 @@
   let lastAttempt = null, retryAt = 0, failures = 0;
   let offCount = 0, arrivalCount = 0, lastConfirmTime = null;
   let savedView = null, pendingMap = null;
+  // Optional overview pins (displayed candidates); they never affect GPS filtering, routing or rate limits.
+  let candidateLayer = null, candidateData = null, pendingCandidates = false;
+  const stage = byId('car-route-stage');
+  const mark = (name, value) => { for (const node of [panel, stage]) if (node) node.dataset[name] = value; };
   const mapVisible = () => !document.getElementById('transport-gps')?.hidden;
   const errorMessages = {
     disabled: '길찾기 서버가 비활성 상태입니다. HTTPS API 서버 실행 설정을 확인해 주세요.',
@@ -53,6 +57,8 @@
     // Destination buttons remain usable: switching cancels the previous session.
     panel.toggleAttribute('aria-busy', busy);
     if (busy) panel.setAttribute('aria-busy', 'true');
+    // Presentation hook for the map overlay and route card.
+    mark('route', tracking ? 'tracking' : !result.hidden ? 'ready' : busy ? 'busy' : 'none');
   }
 
   function resetConfirmations() { offCount = 0; arrivalCount = 0; lastConfirmTime = null; }
@@ -114,8 +120,58 @@
     byId('car-route-external').href = `https://map.kakao.com/?${query}`;
   }
 
+  // The workspace map has a status chip on top and a sheet over its bottom edge; keep pins clear of both.
+  const framePadding = side => stage ? {paddingTopLeft: [side, 64], paddingBottomRight: [side, 44]} : {padding: [side, side]};
+
+  // One map instance for both the candidate overview and the route.
+  function ensureMap() {
+    if (map) return map;
+    map = L.map('car-route-map', {scrollWheelZoom: false});
+    // Only an actual user drag disables following; taps, zoom and panTo do not.
+    map.on('dragstart', () => { following = false; updateControls(); });
+    // Send only the site's origin as Referer, never the patient/GPS page query.
+    const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, referrerPolicy: 'origin',
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }).addTo(map);
+    tiles.on('tileerror', () => {
+      byId('car-route-map-status').textContent = '배경지도를 불러오지 못했습니다. 표시된 선은 카카오 자동차 경로입니다. 카카오맵에서도 확인할 수 있습니다.';
+    });
+    return map;
+  }
+
+  // Returns true when it framed the pins, so a restored view does not override the new candidates.
+  function drawCandidates() {
+    if (!candidateData) return false;
+    if (!mapVisible()) { pendingCandidates = true; return false; }
+    if (!window.L || (!map && !candidateData.hospitals.length)) return false;
+    try {
+      ensureMap();
+      if (candidateLayer) candidateLayer.remove();
+      candidateLayer = L.featureGroup().addTo(map);
+      const {origin, hospitals} = candidateData;
+      if (origin) L.circleMarker([origin.lat, origin.lon], {radius: 7, color: '#fff', weight: 3, fillColor: '#5b6b80', fillOpacity: 1})
+        .bindTooltip('접수 위치 (가상 좌표)').addTo(candidateLayer);
+      for (const hospital of hospitals) {
+        const label = document.createElement('span'), rank = document.createElement('b');
+        label.className = 'tw-pin-label'; rank.textContent = String(hospital.rank); label.append(rank);
+        L.marker([hospital.lat, hospital.lon], {title: `${hospital.rank}순위 ${hospital.name}`, keyboard: true, riseOnHover: true,
+          icon: L.divIcon({className: 'tw-pin', html: label, iconSize: [34, 40], iconAnchor: [17, 38], tooltipAnchor: [0, -34]})})
+          .bindTooltip(document.createTextNode(hospital.name), {direction: 'top'})
+          .on('click', () => document.dispatchEvent(new CustomEvent('quick119:candidate-focus', {detail: {id: hospital.id}})))
+          .addTo(candidateLayer);
+      }
+      map.invalidateSize();
+      // Never move a route or navigation view; frame only a fresh candidate overview.
+      const frame = !!hospitals.length && !tracking && !routeLayer;
+      if (frame) map.fitBounds(candidateLayer.getBounds(), {...framePadding(40), maxZoom: 15});
+      return frame;
+    } catch (_) { return false; }
+  }
+
   function drawMap(coordinates, origin, destination, preserveView = false) {
-    if (!mapVisible()) { pendingMap = {coordinates, origin, destination}; return; }
+    // A newly selected route (not a navigation refresh) is framed when the map is shown again.
+    if (!mapVisible()) { pendingMap = {coordinates, origin, destination, fresh: !tracking && !preserveView}; return; }
     const mapStatus = byId('car-route-map-status');
     mapStatus.textContent = '';
     if (!window.L) {
@@ -123,19 +179,7 @@
       return;
     }
     try {
-      if (!map) {
-        map = L.map('car-route-map', {scrollWheelZoom: false});
-        // Only an actual user drag disables following; taps, zoom and panTo do not.
-        map.on('dragstart', () => { following = false; updateControls(); });
-        // Send only the site's origin as Referer, never the patient/GPS page query.
-        const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          maxZoom: 19, referrerPolicy: 'origin',
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        }).addTo(map);
-        tiles.on('tileerror', () => {
-          mapStatus.textContent = '배경지도를 불러오지 못했습니다. 표시된 선은 카카오 자동차 경로입니다. 카카오맵에서도 확인할 수 있습니다.';
-        });
-      }
+      ensureMap();
       if (routeLayer) routeLayer.remove();
       routeLayer = L.featureGroup().addTo(map);
       const latLngs = coordinates.map(([lon, lat]) => [lat, lon]);
@@ -147,7 +191,7 @@
         .bindTooltip(document.createTextNode(destination.name)).addTo(routeLayer);
       map.invalidateSize();
       // Never reset a user's map view during a navigation refresh/reroute.
-      if (!tracking && !preserveView) map.fitBounds(routeLayer.getBounds(), {padding: [24, 24], maxZoom: 16});
+      if (!tracking && !preserveView) map.fitBounds(routeLayer.getBounds(), {...framePadding(24), maxZoom: 16});
     } catch (_) {
       mapStatus.textContent = '지도 표시를 완료하지 못했습니다. 카카오맵에서 경로를 확인해 주세요.';
     }
@@ -335,6 +379,14 @@
     if (p.hospital_id && selected?.hospital_id === p.hospital_id) return;
     void showRoute(p);
   });
+  document.addEventListener('quick119:candidates', event => {
+    const detail = event.detail || {};
+    const hospitals = (Array.isArray(detail.hospitals) ? detail.hospitals : [])
+      .filter(h => h && validPoint(h) && typeof h.name === 'string' && Number.isInteger(h.rank));
+    candidateData = {origin: detail.origin && validPoint(detail.origin) ? detail.origin : null, hospitals};
+    mark('pins', String(hospitals.length));
+    if (mapVisible()) drawCandidates(); else pendingCandidates = true;
+  });
   document.addEventListener('quick119:before-view', event => {
     if (event.detail.view === 'chat' && map && mapVisible()) {
       savedView = {center: map.getCenter(), zoom: map.getZoom()};
@@ -345,14 +397,18 @@
     requestAnimationFrame(() => {
       if (!mapVisible() || document.hidden) return;
       const view = savedView || (map ? {center: map.getCenter(), zoom: map.getZoom()} : null);
+      let framed = false;
       if (pendingMap) {
-        const {coordinates, origin, destination} = pendingMap;
-        drawMap(coordinates, latest || origin, destination, !!map);
+        const {coordinates, origin, destination, fresh} = pendingMap;
+        // A map may already exist only for the candidate overview; that must not stop a new route from being framed.
+        drawMap(coordinates, latest || origin, destination, !fresh && !!map);
+        framed = !!fresh;
         pendingMap = null;
       }
+      if (pendingCandidates) { pendingCandidates = false; framed = drawCandidates() || framed; }
       if (map) {
         map.invalidateSize({pan: false, animate: false});
-        if (view) map.setView(following && latest ? [latest.lat, latest.lon] : view.center, view.zoom, {animate: false});
+        if (view && !framed) map.setView(following && latest ? [latest.lat, latest.lon] : view.center, view.zoom, {animate: false});
         if (latest) moveMarker(latest);
       }
       savedView = null;
