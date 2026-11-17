@@ -58,3 +58,8 @@ outputs/
 /emergency-app/*.db-*
 /emergency-app/*.sqlite*
 .local-preview/
+
+# Quick119 PWA 로컬 실행물: 팀 소스·가상환경·가상 DB·실행 기록(.local), HTTPS 인증서·키, 운영 기본 DB
+/quick119-pwa/.local/
+/quick119-pwa/certs/
+/quick119-pwa/emergency.db*

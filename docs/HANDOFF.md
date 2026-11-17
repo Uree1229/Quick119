@@ -1,6 +1,6 @@
 # 작업 인계
 
-2026년 11월 17일 Quick119 접수 채팅 변경의 최신 인계는 [접수 채팅 작업 인계](../quick119-pwa/HANDOFF_2026-11-17.md)를 따릅니다. 원형 환자 정보 팝업, 최종 확인 후 탐색, 후보 3곳, 병원 합류 전 보고 공유와 로컬 미커밋 상태를 정리했습니다.
+2026년 11월 17일 Quick119 접수 채팅 변경의 최신 인계는 [접수 채팅 작업 인계](../quick119-pwa/HANDOFF_2026-11-17.md)를 따릅니다. 원형 환자 정보 팝업, 최종 확인 후 탐색, 후보 3곳, 병원 합류 전 보고 공유를 정리했습니다. 이후 지도·채팅 화면 개편은 [TRANSPORT_UI.md](../quick119-pwa/TRANSPORT_UI.md)에 있습니다.
 
 현재 구현·남은 작업은 [docs/PROJECT_STATUS.md](PROJECT_STATUS.md), 설치·실행은 [docs/RUNNING.md](RUNNING.md), 문서 목록은 [docs/README.md](README.md)를 따른다.
 
