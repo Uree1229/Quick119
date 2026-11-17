@@ -232,7 +232,8 @@ _VALUE_END = re.compile(r'\s*(?:$|[,.!?]|추가|정정|수정)')
 # 단위 접두어만 같은 일반 낱말('회복', '도착')은 제외한다.
 _MEASUREMENT_UNIT = re.compile(
     r'\s*(?:%|퍼센트|프로|회(?:/분)?|번|bpm|mmHg|밀리미터\s*수은주|'
-    r'mg(?:/dL)?|밀리그램|°C|℃|도)(?:입니다|이에요|이요|요)?(?!\w)', re.I,
+    r'mg(?:/dL)?|밀리그램|°C|℃|도)'
+    r'(?:입니다|이에요|예요|이요|이고|이며|으로|로|이|가|은|는|을|를|요)?(?!\w)', re.I,
 )
 _BP_BEFORE_FIRST_VALUE = re.compile(r'혈압[은는이가]?\s*[:：]?\s*\Z')
 _BP_SECOND_VALUE = re.compile(
