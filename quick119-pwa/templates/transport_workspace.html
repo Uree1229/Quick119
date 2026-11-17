@@ -1,41 +1,73 @@
-<link rel="stylesheet" href="/static/transport-workspace.css?v=1">
-<section id="transport-workspace" aria-label="GPS 지도와 병원 채팅">
+<link rel="stylesheet" href="/static/transport-workspace.css?v=3">
+<section id="transport-workspace" aria-label="접수 채팅과 이송 지원">
   <header class="transport-toolbar">
-    <div><p class="transport-eyebrow">QUICK119 · 이송 지원</p><strong id="transport-title" tabindex="-1">GPS 지도</strong></div>
-    <button type="button" id="transport-toggle" aria-controls="transport-gps transport-chat" aria-expanded="false"><span id="transport-toggle-label">병원 채팅</span><span id="transport-unread" hidden aria-label="새 의료진 메시지"></span></button>
+    <div><p class="transport-eyebrow">QUICK119 · 이송 지원</p><strong id="transport-title" tabindex="-1">접수 채팅</strong></div>
+    <div class="transport-toolbar-actions">
+      <button type="button" id="transport-patient-info" class="transport-icon-button" aria-label="환자 정보 확인" title="환자 정보 확인"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M5 21v-2a7 7 0 0 1 14 0v2M18 3h4M20 1v4"></path></svg></button>
+      <button type="button" id="transport-toggle" aria-controls="transport-gps transport-chat" aria-expanded="true"><span id="transport-toggle-label">GPS · 병원 선택</span><span id="transport-unread" hidden aria-label="새 의료진 메시지"></span></button>
+    </div>
   </header>
   <div id="transport-inquiries" aria-label="수용 문의 및 목적지 확정" aria-live="polite"></div>
   <p class="transport-synthetic">가상 병원·가상 이송 전용 · 실제 환자정보를 입력하지 마세요.</p>
-  <p id="transport-connection" role="status" aria-live="polite">병원 연결 대기</p>
-  <div id="transport-gps">
+  <p id="transport-connection" role="status" aria-live="polite">접수 채팅을 준비하고 있습니다.</p>
+  <div id="transport-gps" hidden>
     {% include 'car_route_panel.html' %}
     <section class="transport-card" aria-labelledby="transport-hospitals-title">
-      <h2 id="transport-hospitals-title">가상 병원 선택</h2>
-      <p>병원을 선택해 수용을 문의하고, 의료진 응답 후 목적지를 확정하세요.</p>
-      <button type="button" id="transport-new-case">가상 이송 시작</button>
-      <p id="transport-case" class="transport-note"></p>
+      <h2 id="transport-hospitals-title">탐색한 후보 병원</h2>
+      <p>채팅에서 환자 정보를 최종 확인하고 탐색을 시작하면 후보를 표시합니다. 수용 문의와 목적지 확정은 별도로 진행합니다.</p>
+      <p id="transport-hospital-status" class="transport-note" role="status">아직 병원 탐색을 시작하지 않았습니다.</p>
+      <button type="button" id="transport-reload-hospitals" hidden>병원 목록 다시 불러오기</button>
       <div id="transport-hospitals"></div>
     </section>
   </div>
-  <section id="transport-chat" class="transport-card" aria-labelledby="transport-chat-title" hidden>
-    <h2 id="transport-chat-title" tabindex="-1">병원 채팅</h2>
-    <p id="transport-chat-status" role="status">병원 연결 대기 · 수용 응답 후 목적지를 확정해야 대화할 수 있습니다.</p>
-    <div id="transport-messages" role="log" aria-label="이송 대화 기록" tabindex="0"></div>
+  <section id="transport-chat" class="transport-card" aria-labelledby="transport-chat-title">
+    <h2 id="transport-chat-title" tabindex="-1">접수 채팅</h2>
+    <ul id="transport-participants" class="transport-participants" aria-label="현재 대화 참여자"><li>시스템</li><li>구급대원</li></ul>
+    <p id="transport-chat-status" role="status">시스템과 구급대원이 대화를 시작합니다.</p>
+    <p id="transport-sharing" class="transport-note">목적지를 확정하면 해당 병원이 참여하며, 기존 보고도 함께 공유됩니다.</p>
+    <div class="transport-actions"><button type="button" id="transport-start-search" disabled>병원 탐색 시작</button></div>
+    <p id="transport-search-status" class="transport-note" role="status">전송한 보고와 환자 정보를 확인한 뒤 병원을 탐색할 수 있습니다.</p>
+    <button type="button" id="transport-new-case" disabled>접수 연결 다시 시도</button>
+    <p id="transport-case" class="transport-note"></p>
+    <div id="transport-messages" role="log" aria-label="접수 대화 기록" tabindex="0"><p id="transport-intro" class="transport-note">환자 상태를 음성 또는 글로 보고해 주세요. 음성으로 입력한 내용도 확인 후 직접 전송합니다.</p></div>
     <button type="button" id="transport-mark-read" hidden>새 메시지 확인</button>
     <form id="transport-message-form">
-      <label for="transport-message">의료진에게 보낼 메시지</label>
-      <textarea id="transport-message" maxlength="2000" rows="3" disabled placeholder="목적지 확정 후 입력할 수 있습니다."></textarea>
+      <label id="transport-message-label" for="transport-message">시스템에 보낼 환자 상태</label>
+      <textarea id="transport-message" maxlength="2000" rows="3" disabled placeholder="환자 상태를 입력하거나 음성으로 보고해 주세요."></textarea>
+      <div class="transport-voice-actions"><button type="button" id="transport-voice-start" disabled>음성으로 보고</button><button type="button" id="transport-voice-stop" hidden>음성 입력 마치기</button></div>
+      <p id="transport-voice-status" class="transport-note" role="status">음성 입력은 확인된 인식 결과만 초안에 넣으며 자동으로 전송하지 않습니다.</p>
+      <p id="transport-voice-interim" class="transport-voice-interim" hidden aria-live="polite"></p>
       <p id="transport-pending" class="transport-note"></p>
       <div class="transport-actions">
         <button type="submit" id="transport-send" disabled>메시지 보내기</button>
         <button type="button" id="transport-discard" hidden>재시도 요청 지우기</button>
-        <button type="button" id="transport-review-draft" hidden>현재 병원에 보낼 내용 확인</button>
+        <button type="button" id="transport-review-draft" hidden>현재 참여자에게 보낼 내용 확인</button>
       </div>
     </form>
     <div class="transport-actions"><button type="button" id="transport-chat-stop" disabled>채팅 연결 종료</button><button type="button" id="transport-chat-resume" hidden>채팅 다시 연결</button></div>
-    <p class="transport-note">전송 실패 시 같은 요청으로 재시도합니다. 초안과 재시도 요청은 현재 페이지 메모리에만 보관합니다.</p>
+    <p class="transport-note">전송 실패 시 같은 요청으로 재시도합니다. 초안과 재시도 요청은 현재 페이지 메모리에만 보관합니다. 브라우저 음성인식은 제공자의 서버에서 처리될 수 있습니다.</p>
   </section>
+  <dialog id="transport-review-panel" class="transport-review" aria-labelledby="transport-review-title">
+    <header class="transport-review-header"><h3 id="transport-review-title" tabindex="-1">환자 정보 확인</h3><button type="button" id="transport-review-close-top" class="transport-icon-button" aria-label="환자 정보 창 닫기" title="닫기"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg></button></header>
+    <div class="transport-review-body">
+      <p id="transport-review-note" class="transport-note"></p>
+      <h4>서버에 저장된 환자 정보</h4><dl id="transport-saved-patient" class="transport-review-grid"></dl>
+      <h4>전송한 구급대원 보고 원문</h4><div id="transport-review-reports" class="transport-review-reports"></div>
+      <form id="transport-review-form">
+        <h4>탐색 전 최종 확인</h4>
+        <p class="transport-note">자동 추출값은 확인이 필요합니다. 저장값과 보고가 다르거나 보고끼리 충돌하면 임의로 덮어쓰지 않습니다. 모르는 항목은 비워 두세요.</p>
+        <div id="transport-review-fields" class="transport-review-grid"></div>
+        <p id="transport-review-raw" class="transport-note"></p>
+        <p class="transport-note">조회는 저장된 진료 분야·자원 조건과 가상 이동시간을 사용합니다. 증상만으로 진단하거나 필요한 치료를 자동 결정하지 않습니다.</p>
+        <p id="transport-review-error" class="transport-review-error" role="alert"></p>
+        <div class="transport-actions"><button type="submit" id="transport-review-submit">확인하고 탐색 시작</button><button type="button" id="transport-review-close">닫기</button></div>
+      </form>
+    </div>
+  </dialog>
   <p id="transport-error" role="alert" hidden></p>
 </section>
-<script defer src="/static/transport-workspace.js?v=1"></script>
-<script defer src="/static/hospital-chat.js?v=1"></script>
+<script defer src="/static/transport-workspace.js?v=2"></script>
+<script defer src="/static/chat-voice.js?v=1"></script>
+<script defer src="/static/voice-intake.js"></script>
+<script defer src="/static/patient-review.js?v=2"></script>
+<script defer src="/static/hospital-chat.js?v=3"></script>

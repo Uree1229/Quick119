@@ -8,13 +8,12 @@
 {% endblock %}
 {% block content %}
 <main class="home-main">
-  <a class="emergency-cta" href="/emergency">{{ icon('siren') }}<span>응급상황 접수 시작</span>{{ icon('arrow') }}</a>
+  <a class="emergency-cta" href="/transport/">{{ icon('siren') }}<span>응급상황 접수 시작</span>{{ icon('arrow') }}</a>
   <h2 class="section-label">필요한 서비스를 빠르게</h2>
   <div class="shortcut-grid">
-    <a class="shortcut" href="/voice-intake">{{ icon('mic') }}<strong>음성 문진</strong><small>말로 전하는 현재 증상</small></a>
+    <a class="shortcut" href="/transport/">{{ icon('chat') }}<strong>접수 채팅</strong><small>시스템에 환자 상태 전달</small></a>
     <a class="shortcut" href="/patients">{{ icon('users') }}<strong>환자 목록</strong><small>등록된 환자 정보 확인</small></a>
     <a class="shortcut" href="/emergency/hospitals">{{ icon('hospital') }}<strong>주변 응급실</strong><small>현재 위치 기준 최대 5곳</small></a>
-    <button class="shortcut" type="button" disabled aria-label="병원 채팅, 추후 지원 예정">{{ icon('chat') }}<strong>병원 채팅</strong><small class="coming-soon">추후 지원 예정</small></button>
   </div>
   <aside class="safety-note">{{ icon('shield') }}<p>위급한 상황에서는 <a href="tel:119">119 신고를 우선</a>하세요.<br>이 서비스는 실제 신고·출동을 대신하지 않습니다.<br>병상 정보는 실제 수용을 보장하지 않습니다.</p></aside>
 </main>

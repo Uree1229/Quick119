@@ -12,6 +12,9 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from intake_chat import (crew_conversation, crew_message_response,
+                         confirmed_hospital_conversation)
+
 router = APIRouter()
 MAX_BYTES = 1_048_576
 REVISION = "team-runtime-20261030-v1"
@@ -74,7 +77,7 @@ async def forward(request: Request):
         body.extend(chunk)
         if len(body) > MAX_BYTES:
             raise HTTPException(413, "요청이 너무 큽니다.")
-    if request.method == "POST":
+    if request.method in {"POST", "PATCH"}:
         try:
             payload = json.loads(body)
             if not isinstance(payload, dict):
@@ -104,6 +107,25 @@ async def forward(request: Request):
                     client, request.method, base + request.url.path,
                     params=request.query_params.multi_items(), content=bytes(body) if body else None,
                     headers={"Content-Type": "application/json", "Accept": "application/json"})
+                if 200 <= status < 300 and isinstance(result, dict):
+                    pid = request.path_params.get('pid')
+                    hid = request.path_params.get('hid')
+                    if pid and request.method == 'GET' and request.url.path.endswith('/conversation'):
+                        if hid is None:
+                            result = crew_conversation(result)
+                        elif (result.get('active_hospital_session') or {}).get('hospital_id') == hid:
+                            # The hospital GET above is the authorization gate.
+                            # Read global streams only for the current confirmed
+                            # participant, then filter them before returning.
+                            crew_status, crew_page = await _json_response(
+                                client, 'GET', base + f'/api/patients/{pid}/conversation',
+                                params=request.query_params.multi_items(),
+                                headers={'Accept': 'application/json'})
+                            if crew_status != 200 or not isinstance(crew_page, dict):
+                                raise HTTPException(502, '현장 보고 기록을 조회하지 못했습니다.')
+                            result = confirmed_hospital_conversation(result, crew_page, hid)
+                    elif pid and hid is None and request.method == 'POST' and request.url.path.endswith('/messages'):
+                        result = crew_message_response(result)
     except httpx.TimeoutException:
         raise HTTPException(504, "가상 채팅 서버 응답 시간이 초과됐습니다.") from None
     except httpx.HTTPError:
@@ -122,6 +144,8 @@ for method, path in (
     ("GET", "/api/hospitals/{hid}/transport-change-reviews"),
     ("POST", "/api/patients"),
     ("GET", "/api/patients/{pid}"),
+    ("PATCH", "/api/patients/{pid}"),
+    ("GET", "/api/patients/{pid}/candidates"),
     ("GET", "/api/patients/{pid}/input-review"),
     ("GET", "/api/patients/{pid}/transport-review"),
     ("POST", "/api/patients/{pid}/inquiries"),

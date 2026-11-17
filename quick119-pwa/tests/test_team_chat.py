@@ -179,8 +179,12 @@ class LiveTeamChat(unittest.TestCase):
         self.assertTrue(info["profile"]["ok"])
         self.assertFalse(info["workers"]["planning"]["enabled"])
         self.assertEqual(info["database"]["hospital_count"], 10)
-        for path in ("/", "/voice-intake", "/emergency/hospitals", "/manifest.webmanifest", "/sw.js"):
+        for path in ("/", "/transport/", "/emergency/hospitals", "/manifest.webmanifest", "/sw.js"):
             self.assertEqual(self.http.get(self.api_url + path).status_code, 200)
+        for path in ('/emergency', '/voice-intake'):
+            response = self.http.get(self.api_url + path)
+            self.assertEqual(response.status_code, 303)
+            self.assertEqual(response.headers['location'], '/transport/')
         self.assertEqual(self.http.post(self.api_url + "/api/routes/car", json={
             "origin": {"lat": 35.15, "lon": 126.85},
             "destination": {"lat": 35.16, "lon": 126.86}}).status_code, 503)
@@ -215,7 +219,20 @@ class LiveTeamChat(unittest.TestCase):
             return result.get('result', {}).get('value')
 
         def wait(browser, condition):
-            return evaluate(browser, "new Promise((resolve,reject)=>{const start=Date.now();const t=setInterval(()=>{try{if(" + condition + "){clearInterval(t);resolve(true);}else if(Date.now()-start>16000){clearInterval(t);reject(Error('Timed out: '+document.body.innerText.slice(-1600)));}}catch(e){clearInterval(t);reject(e);}},80);})")
+            # The home CTA navigates to a new document. Poll from Python so a
+            # destroyed old execution context does not invalidate the wait.
+            deadline = time.monotonic() + 16
+            while time.monotonic() < deadline:
+                try:
+                    result = browser.call('Runtime.evaluate', expression='Boolean(' + condition + ')', returnByValue=True)
+                except RuntimeError as failure:
+                    if 'context' not in str(failure).lower():
+                        raise
+                else:
+                    if not result.get('exceptionDetails') and result.get('result', {}).get('value'):
+                        return True
+                time.sleep(.08)
+            self.fail('Timed out: ' + condition)
 
         guard = """
         window.storageWrites=[];
@@ -241,29 +258,40 @@ class LiveTeamChat(unittest.TestCase):
         };
         """)
         staff.call('Page.addScriptToEvaluateOnNewDocument', source=guard)
-        mobile.call('Page.navigate', url=self.api_url + '/transport/')
-        wait(mobile, "document.querySelector('[data-transport-inquire]')")
-        evaluate(mobile, "document.getElementById('transport-new-case').click()")
+        mobile.call('Page.navigate', url=self.api_url + '/')
+        wait(mobile, "document.querySelector('.emergency-cta')")
+        evaluate(mobile, "document.querySelector('.emergency-cta').click()")
         wait(mobile, "document.getElementById('transport-case').textContent.includes('Q119-TEST-') && !document.querySelector('[data-transport-inquire]').disabled")
         pid = evaluate(mobile, "new URLSearchParams(location.search).get('pid')")
+        self.assertFalse(evaluate(mobile, "document.getElementById('transport-chat').hidden"))
+        self.assertTrue(evaluate(mobile, "document.getElementById('transport-gps').hidden"))
+        self.assertEqual(evaluate(mobile, "document.getElementById('transport-participants').children.length"), 2)
+        evaluate(mobile, "document.getElementById('transport-message').value='병원 확정 전 가상 환자 상태 보고';document.getElementById('transport-message').dispatchEvent(new Event('input'));document.getElementById('transport-message-form').requestSubmit()")
+        wait(mobile, "document.getElementById('transport-message').value==='' && document.getElementById('transport-messages').textContent.includes('병원 확정 전 가상 환자 상태 보고')")
+        self.call('GET', f'/api/hospitals/H01/patients/{pid}/conversation', status=403)
+        evaluate(mobile, "document.getElementById('transport-toggle').click()")
         evaluate(mobile, "document.querySelector('[data-transport-inquire=H01]').click()")
         wait(mobile, "document.getElementById('transport-inquiries').textContent.includes('문의 중')")
         staff.call('Page.navigate', url=self.api_url + '/hospital/?hid=H01&pid=' + pid)
         wait(staff, "document.querySelector('[data-act=accept]')")
         evaluate(staff, "document.getElementById('handler').value='가상 의료진';document.getElementById('handler').dispatchEvent(new Event('input'));document.querySelector('[data-act=accept]').click()")
         wait(mobile, "document.querySelector('[data-transport-confirm]')")
-        self.assertTrue(evaluate(mobile, "document.getElementById('transport-send').disabled"))
+        self.assertFalse(evaluate(mobile, "document.getElementById('transport-send').disabled"))
+        self.assertEqual(evaluate(mobile, "document.getElementById('transport-participants').children.length"), 2)
+        self.call('GET', f'/api/hospitals/H01/patients/{pid}/conversation', status=403)
         evaluate(mobile, "document.querySelector('[data-transport-confirm]').click()")
         wait(mobile, "!document.getElementById('transport-send').disabled && !document.getElementById('car-route-start').disabled")
+        self.assertEqual(evaluate(mobile, "document.getElementById('transport-participants').children.length"), 3)
         evaluate(mobile, "document.getElementById('car-route-start').click()")
         self.assertEqual(evaluate(mobile, "window.gpsWatchCount"), 1)
-        evaluate(mobile, "document.getElementById('transport-toggle').click();document.getElementById('transport-message').value='가상 대원 실제 HTTP 메시지';document.getElementById('transport-message-form').requestSubmit()")
+        evaluate(mobile, "document.getElementById('transport-toggle').click();document.getElementById('transport-message').value='가상 대원 실제 HTTP 메시지';document.getElementById('transport-message').dispatchEvent(new Event('input'));document.getElementById('transport-message-form').requestSubmit()")
         wait(mobile, "document.getElementById('transport-message').value==='' && !document.getElementById('transport-send').disabled")
         evaluate(staff, "document.querySelector('[data-tab=incoming]').click()")
         wait(staff, "document.querySelector('[data-patient=" + pid + "]')")
         # Select by the team's original incoming-card action, without replacing its chat implementation.
         evaluate(staff, "document.querySelector('[data-patient=" + pid + "]').click()")
         wait(staff, "document.getElementById('chatBody') && !document.getElementById('chatSend').disabled && document.getElementById('chatLog').textContent.includes('가상 대원 실제 HTTP 메시지')")
+        self.assertTrue(evaluate(staff, "document.getElementById('chatLog').textContent.includes('병원 확정 전 가상 환자 상태 보고')"))
         evaluate(mobile, "document.getElementById('transport-toggle').click()")
         evaluate(staff, "document.getElementById('chatBody').value='가상 의료진 실제 HTTP 답장';document.getElementById('chatForm').requestSubmit()")
         wait(mobile, "!document.getElementById('transport-unread').hidden")
@@ -368,6 +396,7 @@ class TransportBrowser(unittest.TestCase):
             'LEAFLET_SOURCE': (ROOT / 'static/vendor/leaflet/leaflet.js').read_text(encoding='utf-8'),
             'NAV_SOURCE': (ROOT / 'static/car-routes.js').read_text(encoding='utf-8'),
             'WORKSPACE_SOURCE': (ROOT / 'static/transport-workspace.js').read_text(encoding='utf-8'),
+            'VOICE_SOURCE': (ROOT / 'static/chat-voice.js').read_text(encoding='utf-8'),
             'CHAT_SOURCE': (ROOT / 'static/hospital-chat.js').read_text(encoding='utf-8'),
         }
         for key, source in sources.items():

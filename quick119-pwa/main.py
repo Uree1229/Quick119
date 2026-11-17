@@ -183,7 +183,7 @@ async def medical_ui_theme(request, call_next):
     else:
         html = theme + html
     current = request.url.path
-    links = [("/", "홈"), ("/voice-intake", "음성 문진"), ("/register", "환자 등록"), ("/patients", "환자 목록"), ("/emergency", "응급상황 접수")]
+    links = [("/", "홈"), ("/transport/", "접수 채팅"), ("/register", "환자 등록"), ("/patients", "환자 목록"), ("/emergency", "응급상황 접수")]
     menu = "".join('<a href="{}" {} class="{}">{}</a>'.format(
         href, 'aria-current="page"' if current == href else "",
         "med-emergency" if href == "/emergency" else "", title
@@ -717,8 +717,8 @@ def patient_detail(patient_id: int):
 
 @app.get("/voice-intake", response_class=HTMLResponse)
 def voice_intake_page(request: Request):
-    return templates.TemplateResponse(request=request, name="voice_intake.html",
-                                      context={"patients": get_patients(), "active_nav": "", "app_env": APP_ENV})
+    # Existing bookmarks enter the same room; voice input now belongs to its composer.
+    return RedirectResponse(url="/transport/", status_code=303)
 
 
 class PatientState(BaseModel):
@@ -760,7 +760,7 @@ def create_emergency_intake(report: EmergencyIntake):
 @app.get("/emergency", response_class=HTMLResponse)
 def emergency_page(request: Request, step: str = ""):
     if step != "patient":
-        return RedirectResponse(url="/voice-intake", status_code=303)
+        return RedirectResponse(url="/transport/", status_code=303)
     return templates.TemplateResponse(request=request, name="emergency.html", context={"patients": get_patients(), "active_nav": "", "app_env": APP_ENV})
 
 

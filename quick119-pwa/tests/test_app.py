@@ -92,15 +92,16 @@ class Quick119Tests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("퀵119", response.text)
         self.assertIn("응급상황 접수 시작", response.text)
-        for target in ["/emergency", "/voice-intake", "/patients", "/emergency/hospitals"]:
+        for target in ["/transport/", "/patients", "/emergency/hospitals"]:
             self.assertIn(f'href="{target}"', response.text)
         self.assertIn('aria-current="page"', response.text)
         self.assertNotIn('class="med-header"', response.text)
 
-    def test_chat_disabled(self):
+    def test_standalone_voice_report_removed_from_home(self):
         response = self.client.get("/")
-        self.assertIn('disabled aria-label="병원 채팅, 추후 지원 예정"', response.text)
-        self.assertNotIn('href="/chat"', response.text)
+        self.assertNotIn('href="/voice-intake"', response.text)
+        self.assertNotIn('음성 문진', response.text)
+        self.assertIn('class="emergency-cta" href="/transport/"', response.text)
 
     def test_empty_patient_selection(self):
         response = self.client.get("/emergency?step=patient")
@@ -108,7 +109,7 @@ class Quick119Tests(unittest.TestCase):
         self.assertIn("아직 등록된 환자가 없습니다", response.text)
         self.assertIn('href="/register"', response.text)
         self.assertIn('href="/emergency/check?patient_id=0"', response.text)
-        self.assertIn('href="/voice-intake"', response.text)
+        self.assertIn('href="/transport/"', response.text)
 
     def test_registered_selection_and_escaping(self):
         patient_id = self.register('<script>alert("synthetic")</script>')
@@ -118,19 +119,13 @@ class Quick119Tests(unittest.TestCase):
         self.assertNotIn('<script>alert("synthetic")', response.text)
         self.assertIn('action="/emergency/check" method="get"', response.text)
 
-    def test_emergency_starts_with_field_report(self):
+    def test_emergency_and_old_voice_bookmark_enter_chat(self):
         response = self.client.get("/emergency", follow_redirects=False)
         self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/voice-intake")
-        voice = self.client.get(response.headers["location"])
-        self.assertEqual(voice.status_code, 200)
-        self.assertIn("현장 환자 상태", voice.text)
-        self.assertIn("최종 확인 및 저장", voice.text)
-        self.assertIn('src="/static/voice-intake.js"', voice.text)
-        self.assertNotIn('class="med-header"', voice.text)
-        self.assertNotIn('href="/emergency?step=patient"', voice.text)
-        for label in ['나이', '성별', '의식', '호흡', '증상', '증상 발생 시간', '혈압', '맥박', '체온', '산소포화도']:
-            self.assertIn(label, voice.text)
+        self.assertEqual(response.headers["location"], "/transport/")
+        voice = self.client.get('/voice-intake', follow_redirects=False)
+        self.assertEqual(voice.status_code, 303)
+        self.assertEqual(voice.headers['location'], '/transport/')
         selection = self.client.get("/emergency?step=patient", follow_redirects=False)
         self.assertEqual(selection.status_code, 200)
         self.assertIn("등록 환자 접수", selection.text)
@@ -193,33 +188,12 @@ class Quick119Tests(unittest.TestCase):
         with closing(sqlite3.connect(self.test_db)) as conn:
             self.assertEqual(conn.execute("SELECT count(*) FROM emergency_intakes").fetchone()[0], 0)
 
-    def test_voice_extraction_and_interaction_in_desktop_chrome(self):
-        chrome = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
-        if not chrome.exists():
-            self.skipTest("Desktop Chrome unavailable; real microphone still unverified")
-        self.register()
-        page = self.client.get("/voice-intake").text
-        # 외부 요청 없이 실제 렌더링된 DOM에서 모의 음성/저장 동작을 검증합니다.
-        page = re.sub(r"<script\b[^>]*>.*?</script>", "", page, flags=re.S)
-        page = re.sub(r"<link\b[^>]*>", "", page)
-        source = Path("static/voice-intake.js").read_text(encoding="utf-8")
-        harness = Path("tests/voice_intake_harness.js").read_text(encoding="utf-8")
-        page = page.replace("</body>", '<pre id="test-result">PENDING</pre><script>const VOICE_SOURCE = '
-                            + json.dumps(source) + ';\n' + harness + '</script></body>')
-        with tempfile.TemporaryDirectory(prefix="quick119-voice-") as folder:
-            root = Path(folder).resolve()
-            path = root / "voice.html"
-            path.write_text(page, encoding="utf-8")
-            result = subprocess.run([str(chrome), "--headless=new", "--disable-gpu", "--no-first-run",
-                                     "--no-default-browser-check", "--disable-background-networking",
-                                     "--disable-component-update", "--disable-sync", "--disable-extensions",
-                                     "--dump-dom", "--virtual-time-budget=3000",
-                                     "--user-data-dir=" + str(root / "profile"), path.as_uri()],
-                                    capture_output=True, timeout=35)
-            self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace")[-1000:])
-            match = re.search(r'<pre id="test-result">(.*?)</pre>', result.stdout.decode("utf-8", errors="replace"), re.S)
-            self.assertIsNotNone(match)
-            self.assertEqual(unescape(match.group(1)), "PASS: field report extraction and interaction")
+    def test_chat_voice_and_participant_scope(self):
+        # Synthetic recognition events exercise the real composer; no microphone or browser driver.
+        result = subprocess.run(['node', '--test', 'tests/test_chat_intake.mjs'],
+                                capture_output=True, timeout=40)
+        self.assertEqual(result.returncode, 0,
+                         (result.stdout + result.stderr).decode('utf-8', errors='replace')[-5000:])
 
     def test_registration_list_detail(self):
         patient_id = self.register()
@@ -239,7 +213,7 @@ class Quick119Tests(unittest.TestCase):
     def test_intake_routes_preserved(self):
         patient_id = self.register()
         for target in [
-            "/register", "/voice-intake", "/emergency/check", "/emergency/check?patient_id=",
+            "/register", "/emergency/check", "/emergency/check?patient_id=",
             f"/emergency/check?patient_id={patient_id}",
             f"/emergency/breathing?patient_id={patient_id}&consciousness=yes",
             f"/emergency/symptoms?patient_id={patient_id}&consciousness=yes&breathing=yes",
@@ -690,7 +664,7 @@ class Quick119Tests(unittest.TestCase):
             self.assertEqual(struct.unpack(">II", png.content[16:24]), tuple(map(int, icon["sizes"].split("x"))))
 
     def test_pwa_resources_on_new_and_legacy_pages(self):
-        for url in ["/", "/emergency?step=patient", "/voice-intake", "/register", "/patients", "/emergency/check", "/pwa-check"]:
+        for url in ["/", "/emergency?step=patient", "/register", "/patients", "/emergency/check", "/pwa-check"]:
             with self.subTest(url=url):
                 html = self.client.get(url).text
                 self.assertEqual(html.count('rel="manifest"'), 1)
@@ -729,9 +703,12 @@ class Quick119Tests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         for name in ["check-mic", "check-gps", "check-secure", "check-display"]:
             self.assertIn(f'id="{name}"', response.text)
-        voice = self.client.get("/voice-intake").text
-        self.assertIn("if(!window.isSecureContext)", Path("static/voice-intake.js").read_text(encoding="utf-8"))
-        self.assertIn('id="transcript"', voice)
+        self.assertIn('href="/transport/"', response.text)
+        voice = Path("static/chat-voice.js").read_text(encoding="utf-8")
+        self.assertIn("window.isSecureContext", voice)
+        self.assertIn("메시지를 직접 입력해 주세요.", voice)
+        workspace = Path("templates/transport_workspace.html").read_text(encoding="utf-8")
+        self.assertIn('id="transport-message"', workspace)
         hospitals = self.client.get("/emergency/hospitals").text
         self.assertIn('onclick="getCurrentLocation()"', hospitals)
         self.assertNotIn('document.addEventListener("DOMContentLoaded"', hospitals)
