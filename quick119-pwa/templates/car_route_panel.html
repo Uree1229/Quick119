@@ -1,0 +1,32 @@
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/static/car-routes.css?v=2">
+<section id="car-route-panel" class="car-route-panel" aria-labelledby="car-route-heading">
+  <p class="car-route-eyebrow">KAKAO MOBILITY · 자동차 길찾기</p>
+  <h2 id="car-route-heading" tabindex="-1">응급실까지 자동차 경로</h2>
+  <p id="car-route-status" role="status" aria-live="polite">아래 병원의 상세정보를 펼치고 ‘현재 GPS에서 자동차 경로 보기’를 누르세요.</p>
+  <p id="car-route-provider" class="car-route-note" hidden></p>
+  <div id="car-route-result" hidden>
+    <p id="car-route-destination" class="car-route-destination"></p>
+    <div class="car-route-metrics">
+      <div><span>남은 거리</span><strong id="car-route-distance"></strong></div>
+      <div><span>예상 소요시간</span><strong id="car-route-duration"></strong></div>
+    </div>
+    <p id="car-route-origin" class="car-route-note"></p>
+    <p id="car-route-gps" class="car-route-note" role="status" aria-live="polite">GPS 상태: 안내 대기</p>
+    <p id="car-route-updated" class="car-route-note"></p>
+    <div id="car-route-map" class="car-route-map" aria-label="GPS 출발지에서 선택한 응급실까지 자동차 경로 지도"></div>
+    <p id="car-route-map-status" class="car-route-note" role="status"></p>
+    <div class="car-route-actions">
+      <button type="button" id="car-route-start">실시간 안내 시작</button>
+      <button type="button" id="car-route-stop" disabled>안내 종료</button>
+      <button type="button" id="car-route-follow" disabled aria-pressed="false">내 위치 따라가기</button>
+      <button type="button" id="car-route-refresh">현재 GPS로 다시 계산</button>
+      <a id="car-route-external" target="_blank" rel="noopener noreferrer">카카오맵에서 길찾기 열기 ↗</a>
+    </div>
+    <p class="car-route-note">일반 자동차·현재 교통 기준 예상값이며, 구급차 긴급주행 소요시간을 보장하지 않습니다. 남은 거리·시간은 마지막 경로 계산 위치 기준입니다.</p>
+    <p class="car-route-note">화면이 꺼지거나 앱이 백그라운드로 전환되면 GPS 추적이 중단될 수 있습니다. 화면을 벗어나면 안내를 종료하며, 복귀 후 ‘실시간 안내 시작’을 다시 눌러 주세요. 지도를 직접 움직이면 따라가기가 해제됩니다.</p>
+    <p class="car-route-note">경로: 카카오모빌리티 · 배경지도: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap 기여자</a></p>
+  </div>
+</section>
+<script defer src="/static/vendor/leaflet/leaflet.js"></script>
+<script defer src="/static/car-routes.js?v=2"></script>

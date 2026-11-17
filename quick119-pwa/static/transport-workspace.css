@@ -1,0 +1,23 @@
+.transport-page{padding:0 16px 24px;max-width:980px;margin:auto}
+#transport-workspace{--navy:#17375e;--red:#d32f2f;color:#17375e;min-width:0;isolation:isolate}
+#transport-workspace,#transport-workspace *{box-sizing:border-box}
+#transport-workspace [hidden]{display:none!important}
+.transport-toolbar{position:sticky;top:0;z-index:900;display:flex;justify-content:space-between;align-items:center;gap:10px;background:#fff;padding:12px 4px;border-bottom:2px solid #17375e}
+.transport-toolbar strong{font-size:20px}.transport-eyebrow{font-size:11px;margin:0 0 3px;color:#526982;letter-spacing:.06em}
+#transport-workspace button{min-height:48px;border:1px solid #c8d6e5;border-radius:10px;background:#fff;color:#17375e;padding:10px 14px;font-size:16px;font-weight:700;cursor:pointer;white-space:normal}
+#transport-workspace button:focus-visible{outline:3px solid #e04a4a;outline-offset:2px}
+#transport-workspace button:disabled{opacity:.5;cursor:default}
+#transport-toggle,#transport-workspace button[type=submit]{background:#17375e;color:white}
+#transport-toggle{flex-shrink:0}#transport-unread{display:inline-block;background:#d32f2f;color:white;border-radius:18px;padding:1px 7px;margin-left:6px;min-width:24px}
+.transport-synthetic,.transport-note{font-size:12px;color:#566b83;line-height:1.6;overflow-wrap:anywhere}.transport-synthetic{border-left:3px solid #d32f2f;padding-left:9px}
+#transport-connection{background:#edf3f9;border-radius:10px;padding:12px;font-size:14px}
+.transport-card{background:#fff;border:1px solid #d3dfea;border-radius:14px;padding:16px;margin:16px 0;min-width:0}
+.transport-card h2{font-size:19px}.transport-card p{overflow-wrap:anywhere}
+.transport-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+#transport-message{width:100%;box-sizing:border-box;font-size:16px;padding:12px;border:1px solid #b4c5d9;border-radius:10px;resize:vertical;color:#17375e}
+#transport-messages{height:min(44dvh,420px);min-height:180px;overflow:auto;overscroll-behavior:contain;border:1px solid #dae4ef;background:#f4f7fb;padding:12px;border-radius:10px;scrollbar-gutter:stable}
+.transport-message{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0;padding:10px;background:#fff;border:1px solid #dae4ef;border-radius:10px;font-size:15px}
+.transport-message[data-role=patient]{background:#e5eef9}.transport-message[data-role=system]{font-size:12px;background:transparent;border:0;color:#566b83}.transport-message small{display:block;font-size:11px;margin-bottom:5px;color:#566b83}
+.transport-hospital{border-top:1px solid #e0e7ef;padding:14px 0}.transport-hospital strong{display:block}.transport-hospital a{color:#17375e;font-size:14px}
+#transport-error{border:1px solid #d32f2f;border-radius:10px;padding:12px;color:#a72222;background:#fff4f4;overflow-wrap:anywhere}
+@media(max-width:480px){.transport-page{padding:0 10px 24px}.transport-card{padding:12px}.transport-toolbar{gap:6px}.transport-toolbar strong{font-size:18px}#transport-toggle{font-size:14px;padding:10px}.transport-actions>*{flex:1}#transport-messages{height:38dvh}}

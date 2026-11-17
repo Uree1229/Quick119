@@ -1,0 +1,2 @@
+:root{--blue:#17375e;--red:#d32f2f}.synthetic-hospital-note{padding:12px;background:#17375e;color:white;font:14px/1.5 sans-serif}.topbar{border-top:3px solid #d32f2f}
+[data-tab=resources],[data-tab=restrictions],[data-tab=operations],#incomingDetail [data-patient-action]{display:none!important}

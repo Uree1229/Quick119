@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "QUICK119",
+  "short_name": "퀵119",
+  "description": "퀵119 응급의료 정보 지원",
+  "lang": "ko-KR",
+  "dir": "ltr",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#17375E",
+  "background_color": "#17375E",
+  "prefer_related_applications": false,
+  "icons": [
+    {"src": "/static/app-icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/static/app-icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/static/app-icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}

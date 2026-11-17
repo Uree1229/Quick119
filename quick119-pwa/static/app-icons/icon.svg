@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>QUICK119</title>
+  <path fill="#17375E" d="M0 0h512v512H0z"/>
+  <rect x="116" y="116" width="280" height="280" rx="76" fill="#E5484D"/>
+  <path fill="#fff" d="M230 166h52v64h64v52h-64v64h-52v-64h-64v-52h64z"/>
+</svg>
