@@ -162,6 +162,34 @@ class NumericFlags(unittest.TestCase):
         # 조사로 읽을 수 없는 글자는 뒤에 무엇이 오든 그대로 표시한다.
         self.assertEqual(self.kinds('산소포화도 80고 나왔어'), [('tens_then_unit', '80고', 89)])
 
+    def test_particle_like_digit_before_a_measurement_unit_is_flagged(self):
+        for text, original, candidate in (
+            ('산소포화도 90이%', '90이', 92),
+            ('산소포화도 90이 퍼센트입니다', '90이', 92),
+            ('호흡 수 20이회', '20이', 22),
+            ('맥박 90일 회/분', '90일', 91),
+            ('혈압 120 80이 mmHg', '80이', 82),
+            ('혈당 100이 밀리그램', '100이', 102),
+            ('혈당 100이 mg/dL', '100이', 102),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.kinds(text), [('tens_then_unit', original, candidate)])
+
+    def test_particle_like_digit_before_the_second_blood_pressure_value_is_flagged(self):
+        for text, original, candidate in (
+            ('혈압 120이 80', '120이', 122),
+            ('혈압 120일/80', '120일', 121),
+            ('혈압은 120이-80', '120이', 122),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.kinds(text), [('tens_then_unit', original, candidate)])
+
+    def test_unit_prefix_and_unrelated_number_do_not_end_the_value(self):
+        for text in ('맥박 90이 회복 기준', '맥박 90이 도착 기준', '혈당 100일 20분 뒤 다시 확인',
+                     '혈압 120 80, 맥박 90일 20분 뒤 다시 확인', '혈압 120이 20분 뒤 다시 확인'):
+            with self.subTest(text=text):
+                self.assertEqual(ac.numeric_flags(text), [])
+
     def test_range_word_after_a_round_number_is_not_flagged(self):
         self.assertEqual(ac.numeric_flags('맥박90에서120사이'), [])
         self.assertEqual(self.kinds('맥박 120사 추가'), [('tens_then_unit', '120사', 124)])

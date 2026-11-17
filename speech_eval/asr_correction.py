@@ -229,6 +229,16 @@ _LABEL_LOOKBACK = 16
 # '이'와 '일'은 주격 조사·서술격으로도 쓰인다("80이 나왔어", "90일 때"). 숫자 2·1로 볼 근거가 약하다.
 _PARTICLE_LIKE = frozenset('이일')
 _VALUE_END = re.compile(r'\s*(?:$|[,.!?]|추가|정정|수정)')
+# 단위 접두어만 같은 일반 낱말('회복', '도착')은 제외한다.
+_MEASUREMENT_UNIT = re.compile(
+    r'\s*(?:%|퍼센트|프로|회(?:/분)?|번|bpm|mmHg|밀리미터\s*수은주|'
+    r'mg(?:/dL)?|밀리그램|°C|℃|도)(?:입니다|이에요|이요|요)?(?!\w)', re.I,
+)
+_BP_BEFORE_FIRST_VALUE = re.compile(r'혈압[은는이가]?\s*[:：]?\s*\Z')
+_BP_SECOND_VALUE = re.compile(
+    r'(?:\s*[/／–−에의-]\s*|\s+)[0-9]{2,3}'
+    r'(?=$|[\s,.!?]|mmHg|밀리미터|입니다|이에요|이요|[이일](?!\w))', re.I,
+)
 _LABEL_LOOKAHEAD = 12
 
 
@@ -238,9 +248,13 @@ def _after_measurement_label(text, start, labels):
     return any(label in window for label in labels)
 
 
-def _value_ends(text, end, labels):
-    """수치가 여기서 끝나는가: 문장 끝·문장부호, 수정 명령, 다음 측정 항목 이름이 바로 이어진다."""
-    if _VALUE_END.match(text, end):
+def _value_ends(text, start, end, labels):
+    """수치 뒤에 구절 경계, 측정 단위, 다음 측정 항목 또는 혈압의 두 번째 값이 이어지는지 본다."""
+    if _VALUE_END.match(text, end) or _MEASUREMENT_UNIT.match(text, end):
+        return True
+    if _BP_SECOND_VALUE.match(text, end) and _BP_BEFORE_FIRST_VALUE.search(
+        text[max(0, start - _LABEL_LOOKBACK):start]
+    ):
         return True
     following = ''.join(text[end:end + _LABEL_LOOKAHEAD].split())
     return any(following.startswith(label) for label in labels)
@@ -256,7 +270,7 @@ def numeric_flags(text, labels=None):
         unit = _SINO_UNIT.get(m.group(2), _NEAR_UNIT.get(m.group(2)))
         if not unit or not _after_measurement_label(text, m.start(), labels):
             continue
-        if m.group(2) not in _PARTICLE_LIKE or _value_ends(text, m.end(), labels):
+        if m.group(2) not in _PARTICLE_LIKE or _value_ends(text, m.start(), m.end(), labels):
             flags.append(dict(kind='tens_then_unit', start=m.start(), end=m.end(), original=m.group(),
                               candidate=int(m.group(1)) + unit))
     for m in _NATIVE_THEN_DIGIT.finditer(text):
