@@ -79,7 +79,7 @@ test('수용 유지·수용 취소 요청·도착 확인은 대화 옆 처리 �
   const page=await open();
   const actions=page.el('incomingActions').innerHTML,detail=page.el('incomingDetail').innerHTML;
   for(const name of ['keep','adjust','arrive'])assert.match(actions,new RegExp(`data-patient-action="${name}"`));
-  assert.match(actions,/id="reviewNote"/);assert.match(actions,/data-patient-action="adjust"[^>]*>수용 취소 요청<\/button>/);assert.match(actions,/그 전까지 목적지는 이 병원으로 유지됩니다/);
+  assert.match(actions,/id="reviewNote"/);assert.match(actions,/data-patient-action="adjust"[^>]*>수용 취소 요청<\/button>/);assert.match(actions,/이송자가 다른 병원의 수용 응답을 확인하고 새 목적지를 확정할 때까지 목적지는 이 병원으로 유지됩니다/);
   assert.doesNotMatch(detail,/data-patient-action|id="reviewNote"/,'상세에는 처리 버튼이 없음');
   assert.equal(page.el('chatPatient').textContent,'· 12세 · 복통');
   assert.equal(page.el('hospitalChat').hidden,false);
@@ -107,10 +107,18 @@ test('도착한 환자는 처리 칸에 퇴실 확인만, 선택을 풀면 처�
   assert.equal(page.el('incomingActions').innerHTML,'');assert.equal(page.el('chatPatient').textContent,'');
 });
 
-test('추천·확인 안내는 수용 문의 탭에서만 보이고 도착 예정 탭에서는 숨긴다',async()=>{
+test('추천·확인 안내는 도착 예정에서 접혀 있고 버튼으로 열 수 있다',async()=>{
   const page=await open();
   assert.ok(page.panelOptions,'추천 패널 모듈 연결');
-  assert.equal(page.panelOptions.snapshot().showPlanning,false,'도착 예정 탭');
+  const toggle=page.el('incomingPlanningToggle');
+  assert.equal(toggle.hidden,false);
+  assert.equal(toggle.ariaExpanded,'false');
+  assert.equal(page.panelOptions.snapshot().showPlanning,false,'도착 예정의 기본 상태');
+  page.fire('incomingPlanningToggle','click',{});
+  assert.equal(toggle.ariaExpanded,'true');
+  assert.equal(page.panelOptions.snapshot().showPlanning,true,'도착 예정에서 열림');
+  page.fire('incomingPlanningToggle','click',{});
+  assert.equal(page.panelOptions.snapshot().showPlanning,false,'도착 예정에서 접힘');
   page.eval("setTab('inquiries')");
   assert.equal(page.panelOptions.snapshot().showPlanning,true,'수용 문의 탭');
 });
@@ -122,16 +130,28 @@ test('처리 칸은 내용이 같으면 다시 그리지 않고, 다른 환자�
   Object.defineProperty(el,'innerHTML',{get:()=>value,set:v=>{writes++;value=v;}});
   await page.eval('poll()');await settle();page.eval('renderIncoming()');
   assert.equal(writes,0,'바뀐 게 없으면 버튼을 새로 만들지 않음');
-  page.eval(`reviewDrafts.set(${JSON.stringify(LONG_ID)},'병상 부족')`);page.eval('renderIncoming()');
-  assert.equal(writes,1);assert.match(value,/>병상 부족<\/textarea>/);
+  const note=page.el('reviewNote');note.value='병상 부족';
+  page.fire('incomingActions','input',{target:note});
+  page.eval('renderIncoming()');
+  assert.equal(writes,0,'메모를 입력해도 동일한 환자의 버튼은 유지');
+  assert.equal(note.value,'병상 부족');
   page.fire('incomingList','click',{target:{closest:s=>s==='[data-patient]'?{dataset:{patient:other}}:null}});await settle();
-  assert.equal(writes,2,'환자를 바꾸면 다시 그림');assert.match(value,new RegExp(`data-for="${other}"`));
-  assert.doesNotMatch(value,/병상 부족/,'앞 환자의 메모가 남지 않음');
+  assert.equal(writes,1,'환자를 바꾸면 다시 그림');assert.match(value,new RegExp(`data-for="${other}"`));
+  assert.equal(note.value,'','앞 환자의 메모가 남지 않음');
+  page.fire('incomingList','click',{target:{closest:s=>s==='[data-patient]'?{dataset:{patient:LONG_ID}}:null}});await settle();
+  assert.equal(note.value,'병상 부족','앞 환자로 돌아가면 메모 복원');
 });
 
 test('자원·제한·업무 계측 탭은 기본으로 숨기고, tools=1이거나 경고에서 열면 보인다',async()=>{
   const tabs=page=>Object.fromEntries(page.tabButtons.map(b=>[b.dataset.tab,b.hidden]));
   const page=await open();
+  assert.deepEqual(tabs(page),{inquiries:false,incoming:false,resources:true,restrictions:true,operations:true});
+  const toggle=page.el('hospitalToolToggle');
+  assert.equal(toggle.ariaExpanded,'false');
+  page.fire('hospitalToolToggle','click',{});
+  assert.equal(toggle.ariaExpanded,'true');
+  assert.deepEqual(tabs(page),{inquiries:false,incoming:false,resources:false,restrictions:false,operations:false});
+  page.fire('hospitalToolToggle','click',{});
   assert.deepEqual(tabs(page),{inquiries:false,incoming:false,resources:true,restrictions:true,operations:true});
   page.eval("setTab('restrictions')");
   assert.equal(tabs(page).restrictions,false,'경고의 「수용 제한 확인」으로 열면 그 탭은 보임');assert.equal(tabs(page).resources,true);
