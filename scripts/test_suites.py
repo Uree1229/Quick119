@@ -180,8 +180,9 @@ def main(argv=None):
         expected = set()
     else:
         if args.research_root:
-            research = groups['research']
-            current = groups['core'] + groups['local_data'] if args.suite == 'all' else []
+            # The decision report verifies the live operational baseline against its registered manifest.
+            research = [name for name in groups['research'] if name != 'test_algorithm_decision_20261030']
+            current = [name for name in selected if name not in research]
             summary = run_python(current)
             # Fresh interpreter so neither era inherits imported server modules from the other.
             with ProcessPoolExecutor(max_workers=1, mp_context=get_context('spawn')) as pool:
@@ -193,7 +194,7 @@ def main(argv=None):
             report['python'] = summary
         else:
             report['python'] = run_python(selected)
-        expected = set(json.loads(EXPECTED_FAILURES.read_text(encoding='utf-8'))['modules'])
+        expected = set() if args.research_root else set(json.loads(EXPECTED_FAILURES.read_text(encoding='utf-8'))['modules'])
     unexpected = {k: v for k, v in report['python']['failing'].items() if k not in expected}
     report['expected_failures'] = len(set(report['python']['failing']) & expected)
     report['unexpected_failures'] = sorted(unexpected)
