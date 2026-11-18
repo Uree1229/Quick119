@@ -64,3 +64,19 @@
 .inq-alert .btn-small { min-height:44px; }
 .inq-alert .inq-alert-view { flex:1; background:var(--blue); border-color:var(--blue); color:#fff; font-weight:700; }
 .inq-alert-more { border-width:1px; border-color:var(--line); font-size:14px; }
+
+/* 도착 예정 탭: 이송 대화를 위에 두고, 수용 유지·조정·도착 처리를 대화 옆에 둔다. 환자 ID는 끝자리만 작게 보인다. */
+.card .pid { margin-left:auto; font-variant-numeric:tabular-nums; }
+.chat-patient { font-size:16px; font-weight:400; color:var(--muted); }
+#hospitalChat { margin-top:0; }
+#hospitalChat + #incomingDetail { margin-top:16px; }
+#hospitalChat .chat-body { display:grid; grid-template-columns:minmax(0,1fr) 260px; }
+#hospitalChat .chat-main { min-width:0; }
+.transfer-actions { border-left:1px solid #E4E7EC; padding:16px 18px 20px; display:flex; flex-direction:column; gap:10px; }
+.transfer-actions:empty { display:none; }
+.transfer-actions h4 { margin:0; font-size:15px; }
+.transfer-actions textarea { width:100%; box-sizing:border-box; }
+.transfer-actions .row { display:flex; flex-direction:column; gap:8px; }
+.transfer-actions .btn-small { min-height:44px; width:100%; }
+.transfer-actions [data-patient-action="adjust"] { border-color:var(--orange); color:var(--orange); }
+@media(max-width:900px) { #hospitalChat .chat-body { grid-template-columns:1fr; } .transfer-actions { border-left:0; border-top:1px solid #E4E7EC; } }
