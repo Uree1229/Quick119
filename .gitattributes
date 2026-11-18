@@ -147,10 +147,27 @@ emergency-app/static/*.mjs text eol=lf
 emergency-app/templates/voice_intake.html text eol=lf
 
 # These research sources are read as bytes by published experiment locks.
-inquiry_lab/**/*.py -text
-simulation/*.py -text
-server/synthetic.py -text
 config/heuristic_assignment_selected_20261014.json -text
+inquiry_lab/eat_policy.py text eol=crlf
+inquiry_lab/horizon_policy.py -text
+inquiry_lab/residual_policy.py text eol=crlf
+inquiry_lab/shortlist_audit.py -text
+server/synthetic.py -text
+simulation/adaptive_inquiry.py -text
+simulation/cp_sat_assignment.py -text
+simulation/h1_online_audit.py -text
+simulation/h1_online_engine.py -text
+simulation/h1_online_experiment.py -text
+simulation/heuristic_assignment.py -text
+simulation/inquiry_queue.py -text
+simulation/map_replay.py -text
+simulation/online_allocation_audit.py -text
+simulation/online_allocation_engine.py -text
+simulation/online_allocation_experiment.py -text
+simulation/online_allocation_scenarios.py -text
+simulation/priority_assignment.py -text
+simulation/road_routes.py -text
+simulation/sim.py -text
 # The waiting study receipt records the original Windows checkout bytes.
 config/waiting_decision_20261030.json text eol=crlf
 
