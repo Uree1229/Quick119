@@ -146,6 +146,9 @@ emergency-app/common_server.py text eol=lf
 emergency-app/static/*.mjs text eol=lf
 emergency-app/templates/voice_intake.html text eol=lf
 
+# The October 20 preservation receipts hash these two working references verbatim.
+archive/research-replay/20261020/*.md -text
+
 # These research sources are read as bytes by published experiment locks.
 config/heuristic_assignment_selected_20261014.json -text
 inquiry_lab/eat_policy.py text eol=crlf

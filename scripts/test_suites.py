@@ -180,8 +180,9 @@ def main(argv=None):
         expected = set()
     else:
         if args.research_root:
-            # The decision report verifies the live operational baseline against its registered manifest.
-            research = [name for name in groups['research'] if name != 'test_algorithm_decision_20261030']
+            # These modules exercise the live operational baseline and the post-study server contract.
+            live = {'test_algorithm_decision_20261030', 'test_inquiry_observations', 'test_inquiry_policies'}
+            research = [name for name in groups['research'] if name not in live]
             current = [name for name in selected if name not in research]
             summary = run_python(current)
             # Fresh interpreter so neither era inherits imported server modules from the other.

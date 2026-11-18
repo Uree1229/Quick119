@@ -1,4 +1,4 @@
-"""Recover the sealed October server inside a disposable November 1 research restore."""
+"""Recover the sealed October server and reference documents inside a disposable November 1 research restore."""
 import argparse
 import difflib
 import hashlib
@@ -50,12 +50,23 @@ def restore(root):
         if hashlib.sha256(archived).hexdigest() != expected:
             original = subprocess.check_output(['git', 'show', f'{COMMIT}:server/{name}'], cwd=REPO)
             pending[path] = recover(original, archived, expected)
+    references = json.loads((root / '.codex-build/eat-shortlist-20261020/preservation/before.json').read_bytes())
+    for name in ('README.md', 'EAT_INQUIRY_EXPERIMENT.md'):
+        path = root / 'docs' / name
+        if path.resolve().parent != root / 'docs':
+            raise ValueError(f'Expected a reference document in the restored docs directory: {path}')
+        expected = references['reference_files_sha256']['docs/' + name]
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            content = (REPO / 'archive/research-replay/20261020' / name).read_bytes()
+            if hashlib.sha256(content).hexdigest() != expected:
+                raise ValueError(f'Reference document differs from the original receipt: {name}')
+            pending[path] = content
     for path, content in pending.items():
         with tempfile.TemporaryDirectory(dir=path.parent) as staging:
             temp = Path(staging) / path.name
             temp.write_bytes(content)
             temp.replace(path)
-    print(f'Verified {len(FILES)} sealed server files, restored {len(pending)}.')
+    print(f'Verified {len(FILES)} server files and two reference documents, restored {len(pending)}.')
 
 
 if __name__ == '__main__':
