@@ -22,7 +22,9 @@ import sys
 import time
 import traceback
 import unittest
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import nullcontext
+from multiprocessing import get_context
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +96,19 @@ def run_python(names, *, stream=None, verbosity=0):
     return summary
 
 
+def archived_research(root, names):
+    """Run only the requested inventory with the original source, paths and locks."""
+    os.chdir(root)
+    excluded = {ROOT, ROOT / 'scripts', *PYTHON_TEST_DIRS}
+    sys.path[:] = [str(root), str(root / '.solver_deps')] + [
+        s for s in sys.path if Path(s).resolve() not in excluded | {root, root / '.solver_deps'}
+    ]
+    missing = [name for name in names if not (root / (name + '.py')).is_file()]
+    if missing:
+        raise ValueError('Missing modules in research snapshot: ' + ', '.join(missing))
+    return run_python(names)
+
+
 def pinned_environment():
     """Team runtime and allocation baseline tests refuse to run outside this frozen runtime."""
     lock = json.loads((ROOT / 'config' / 'server_allocation_baseline_20261030.json').read_text(encoding='utf-8'))
@@ -125,10 +140,17 @@ def main(argv=None):
     parser.add_argument('suite', choices=('list', 'core', 'local-data', 'research', 'all', 'python'))
     parser.add_argument('modules', nargs='*', metavar='MODULE', help='Python test modules or qualified test names')
     parser.add_argument('--node', help='node executable for the UI tests (default: TEST_NODE or PATH)')
+    parser.add_argument('--research-root', type=Path, help='run research in a restored legacy tree with root-level tests')
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument('-v', '--verbose', dest='verbosity', action='store_const', const=2)
     verbosity.add_argument('-q', '--quiet', dest='verbosity', action='store_const', const=0)
     args = parser.parse_intermixed_args(argv)
+    if args.research_root:
+        if args.suite not in ('research', 'all'):
+            parser.error('--research-root applies to research or all')
+        args.research_root = args.research_root.resolve()
+        if not (args.research_root / 'test_h1_online_engine.py').is_file():
+            parser.error('research root must contain the original root-level tests')
     groups = classify()
     if args.suite == 'python':
         if not args.modules:
@@ -157,7 +179,20 @@ def main(argv=None):
         report['python'] = run_python(selected, stream=sys.stderr, verbosity=1 if args.verbosity is None else args.verbosity)
         expected = set()
     else:
-        report['python'] = run_python(selected)
+        if args.research_root:
+            research = groups['research']
+            current = groups['core'] + groups['local_data'] if args.suite == 'all' else []
+            summary = run_python(current)
+            # Fresh interpreter so neither era inherits imported server modules from the other.
+            with ProcessPoolExecutor(max_workers=1, mp_context=get_context('spawn')) as pool:
+                archived = pool.submit(archived_research, args.research_root, research).result()
+            report['research_snapshot'] = dict(root=str(args.research_root), modules=archived['modules'], tests=archived['tests'])
+            for key in ('modules', 'tests', 'failures', 'errors', 'skipped'):
+                summary[key] += archived[key]
+            summary['failing'].update(archived['failing'])
+            report['python'] = summary
+        else:
+            report['python'] = run_python(selected)
         expected = set(json.loads(EXPECTED_FAILURES.read_text(encoding='utf-8'))['modules'])
     unexpected = {k: v for k, v in report['python']['failing'].items() if k not in expected}
     report['expected_failures'] = len(set(report['python']['failing']) & expected)

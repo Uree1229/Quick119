@@ -6,6 +6,7 @@ import logging
 
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 
+import mimetypes
 from fastapi.staticfiles import StaticFiles
 
 from pathlib import Path
@@ -184,6 +185,8 @@ async def medical_ui_theme(request, call_next):
         html = theme + html
     current = request.url.path
     links = [("/", "홈"), ("/transport/", "접수 채팅"), ("/register", "환자 등록"), ("/patients", "환자 목록"), ("/emergency", "응급상황 접수")]
+    if not chat_ui_enabled(request):
+        links = [(href, title) for href, title in links if href != "/transport/"]
     menu = "".join('<a href="{}" {} class="{}">{}</a>'.format(
         href, 'aria-current="page"' if current == href else "",
         "med-emergency" if href == "/emergency" else "", title
@@ -206,7 +209,10 @@ BASE_DIR = Path(__file__).resolve().parent
 
 
 
-templates = Jinja2Templates(directory=BASE_DIR / "templates")
+templates = Jinja2Templates(
+    directory=BASE_DIR / "templates",
+    context_processors=[lambda request: {"chat_ui_enabled": chat_ui_enabled(request)}],
+)
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)
@@ -237,6 +243,8 @@ def pwa_check_page(request: Request):
 
 
 
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/javascript", ".mjs")
 app.mount(
 
     "/static",
@@ -262,7 +270,7 @@ app.mount(
 @app.get("/", response_class=HTMLResponse)
 
 def home(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html", context={"active_nav": "home", "app_env": APP_ENV, "chat_ui_enabled": chat_ui_enabled()})
+    return templates.TemplateResponse(request=request, name="index.html", context={"active_nav": "home", "app_env": APP_ENV})
 
 
 
@@ -717,8 +725,8 @@ def patient_detail(patient_id: int):
 
 @app.get("/voice-intake", response_class=HTMLResponse)
 def voice_intake_page(request: Request):
-    # Existing bookmarks enter the same room; voice input now belongs to its composer.
-    return RedirectResponse(url="/transport/", status_code=303)
+    destination = "/transport/" if chat_ui_enabled(request) else "/emergency?step=patient"
+    return RedirectResponse(url=destination, status_code=303)
 
 
 class PatientState(BaseModel):
@@ -759,7 +767,7 @@ def create_emergency_intake(report: EmergencyIntake):
 
 @app.get("/emergency", response_class=HTMLResponse)
 def emergency_page(request: Request, step: str = ""):
-    if step != "patient":
+    if step != "patient" and chat_ui_enabled(request):
         return RedirectResponse(url="/transport/", status_code=303)
     return templates.TemplateResponse(request=request, name="emergency.html", context={"patients": get_patients(), "active_nav": "", "app_env": APP_ENV})
 
@@ -2432,6 +2440,7 @@ button{display:block;width:100%;padding:17px;background:#1976d2;color:white;bord
 @app.get("/emergency/hospitals", response_class=HTMLResponse)
 
 def emergency_hospitals(
+    request: Request,
 
     patient_id: int | None = None,
 
@@ -2741,7 +2750,7 @@ def emergency_hospitals(
                 '거리순으로 표시됩니다. 병원을 누르면 자세한 정보를 확인할 수 있습니다. '
                 '목록의 거리·시간은 응급실 조회 시 위치 기준이며, 자동차 경로 버튼은 GPS를 새로 확인합니다. '
                 '병상은 공공 API 보고값이며 실제 수용 가능 여부는 119·병원에 확인하세요.'
-                '</div>' + templates.env.get_template('transport_workspace.html' if chat_ui_enabled() else 'car_route_panel.html').render() + hospital_cards
+                '</div>' + templates.env.get_template('transport_workspace.html' if chat_ui_enabled(request) else 'car_route_panel.html').render() + hospital_cards
             )
 
         else:

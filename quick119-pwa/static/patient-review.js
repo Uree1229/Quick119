@@ -157,6 +157,8 @@
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeReview();
     });
     dialog.addEventListener('close', () => {
+      // A queued close event can arrive after the dialog has reopened.
+      if (dialog.open) return;
       reviewed = null;
       const target = returnFocus?.isConnected && !returnFocus.disabled && returnFocus.getClientRects().length ? returnFocus : $('toggle');
       target?.focus({preventScroll: true});
