@@ -12,7 +12,8 @@
   const originalMap = L.map;
   L.map = (...args) => { mapCount++; map = originalMap(...args); const invalidate = map.invalidateSize;
     map.invalidateSize = (...args) => { invalidations++; return invalidate.apply(map, args); }; return map; };
-  L.tileLayer = () => ({addTo() { return this; }, on() { return this; }});
+  let tileError;
+  L.tileLayer = () => ({addTo() { return this; }, on(event, handler) { if (event === 'tileerror') tileError = handler; return this; }});
   let hidden = false, now = Date.now();
   Date.now = () => now;
   Object.defineProperty(document, 'hidden', {configurable: true, get: () => hidden});
@@ -54,7 +55,12 @@
         coordinates: [[body.origin.lon, body.origin.lat], [body.destination.lon, body.destination.lat]], cached: false});
     }
     if (url.pathname === '/api/hospitals') return reply(hospitals);
-    if (url.pathname === '/api/patients') { patient = body; events.push({id: 'event:1', kind: 'system', sender_role: 'system', at: now / 1000, text: '가상 이송 생성', order_key: [1, 0, 1]}); return reply(body); }
+    if (url.pathname === '/api/patients') { patient = {...body, state: 'WAITING', version: 1}; events.push({id: 'event:1', kind: 'system', sender_role: 'system', at: now / 1000, text: '가상 이송 생성', order_key: [1, 0, 1]}); return reply(body); }
+    if (patient && url.pathname === '/api/patients/' + patient.id) {
+      if (options.method === 'PATCH') patient = {...patient, ...body, version: patient.version + 1};
+      return reply(patient);
+    }
+    if (url.pathname.endsWith('/candidates')) return reply({candidates: hospitals.map(h => ({...h, hospital_id: h.id}))});
     if (url.pathname.endsWith('/inquiries') && body) { inquiries.push({id: 1, hospital_id: body.hospital_ids[0], hospital_name: hospitals[0].name, state: 'PENDING', usable: false}); return reply({inquiries}); }
     if (url.pathname.endsWith('/confirm')) { check(accepted, 'Confirmation follows staff acceptance'); session = 1; inquiries[0].state = 'CONFIRMED'; return reply({id: patient.id}); }
     if (url.pathname.endsWith('/conversation')) {
@@ -62,7 +68,7 @@
       const limit = Number(url.searchParams.get('limit')) || 100;
       const ev = events.filter(e => Number(e.id.split(':')[1]) > ec).slice(0, limit);
       const msg = messages.filter(m => m.message_id > mc).slice(0, limit);
-      return reply({conversation: {id: 1, state}, active_hospital_session: session ? {id: session, hospital_id: 'H01', hospital_name: hospitals[0].name} : null,
+      return reply({patient, conversation: {id: 1, state}, active_hospital_session: session ? {id: session, hospital_id: 'H01', hospital_name: hospitals[0].name} : null,
         can_send: state === 'OPEN', inquiries: [...inquiries], items: [...ev, ...msg],
         cursors: {event_id: ev.length ? Number(ev.at(-1).id.split(':')[1]) : ec, message_id: msg.length ? msg.at(-1).message_id : mc}, has_more: false});
     }
@@ -91,7 +97,7 @@
   };
   const staffMessage = text => { const n = messages.length + 1; messages.push({id: 'message:' + n, message_id: n, kind: 'message',
     sender_role: 'hospital', sender_name: '가상 의료진', text, body: text, at: now / 1000, order_key: [1, 1, n]}); };
-  window.eval(NAV_SOURCE); window.eval(WORKSPACE_SOURCE); window.eval(VOICE_SOURCE); window.eval(CHAT_SOURCE); await settle();
+  window.eval(NAV_SOURCE); window.eval(WORKSPACE_SOURCE); window.eval(VOICE_SOURCE); window.eval(REVIEW_SOURCE); window.eval(CHAT_SOURCE); await settle();
   check(patient?.id.startsWith('Q119-TEST-'), 'Only a synthetic episode is created: ' + $('error').textContent);
   check(!$('chat').hidden && $('gps').hidden && !$('send').disabled, 'Emergency entry automatically opens writable system/crew chat');
   check($('participants').children.length === 2, 'Only system and crew participate before confirmation');
@@ -99,7 +105,10 @@
   $('message').value = '병원 확정 전 환자 상태 보고'; $('message').dispatchEvent(new Event('input'));
   $('message-form').dispatchEvent(new Event('submit', {bubbles: true, cancelable: true})); await settle();
   check(posts.length === 1 && posts[0].hospital_session_id === null && $('message').value === '', 'Private report is sent to the same room before any inquiry');
-  $('toggle').click(); await settle();
+  $('start-search').click(); $('review-submit').click(); await settle();
+  check(!$('gps').hidden && document.querySelectorAll('[data-transport-inquire]').length === hospitals.length, 'Review opens map with ranked candidates');
+  tileError();
+  check(nav('map-status').textContent === '배경지도 일부를 불러오지 못했습니다.', 'Tile failure does not mislabel candidate or route data');
   document.querySelector('[data-transport-inquire]').click(); await settle();
   check(inquiries[0].state === 'PENDING' && !$('send').disabled && $('participants').children.length === 2, 'Inquiry keeps system/crew chat writable without adding hospital');
   accepted = true; inquiries[0].state = 'ACCEPTED'; inquiries[0].usable = true; await tick();
@@ -110,7 +119,7 @@
   check($('send').disabled && !$('review-draft').hidden, 'Private draft requires review before sharing with newly joined hospital');
   $('message').value = ''; $('message').dispatchEvent(new Event('input'));
   check(!$('send').disabled && $('messages').textContent.includes('병원 확정 전 환자 상태 보고'), 'Confirmation preserves prior report history and enables shared messages');
-  document.querySelector('.transport-hospital button').click(); await settle(); nav('start').click();
+  nav('start').click();
   check(watchers.length === 1 && cleared.length === 0, 'GPS starts once');
   await fix(0);
   map.setZoom(17, {animate: false}); const sameMap = map, sameLog = $('messages');
@@ -144,6 +153,7 @@
   check(!$('unread').hidden && $('unread').textContent === '1', 'GPS view receives staff message and unread badge');
   await tick(); check($('unread').textContent === '1', 'Polling does not double-count unread messages');
   $('toggle').click(); await settle();
+  if (!$('mark-read').hidden) $('mark-read').click();
   check($('unread').hidden && $('messages') === sameLog, 'Viewing the message clears badge without recreating chat');
   $('message').value = '전환 중 초안';
   for (let i = 0; i < 8; i++) { $('toggle').click(); await settle(); }

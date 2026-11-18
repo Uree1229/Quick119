@@ -1,7 +1,7 @@
 <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/static/car-routes.css?v=2">
 <section id="car-route-panel" class="car-route-panel" aria-labelledby="car-route-heading">
-  <p class="car-route-eyebrow">KAKAO MOBILITY · 자동차 길찾기</p>
+  <p class="car-route-eyebrow">자동차 길찾기</p>
   <h2 id="car-route-heading" tabindex="-1">응급실까지 자동차 경로</h2>
   <p id="car-route-status" role="status" aria-live="polite">아래 병원의 상세정보를 펼치고 ‘현재 GPS에서 자동차 경로 보기’를 누르세요.</p>
   <p id="car-route-provider" class="car-route-note" hidden></p>
@@ -23,10 +23,10 @@
       <button type="button" id="car-route-refresh">현재 GPS로 다시 계산</button>
       <a id="car-route-external" target="_blank" rel="noopener noreferrer">카카오맵에서 길찾기 열기 ↗</a>
     </div>
-    <p class="car-route-note">일반 자동차·현재 교통 기준 예상값이며, 구급차 긴급주행 소요시간을 보장하지 않습니다. 남은 거리·시간은 마지막 경로 계산 위치 기준입니다.</p>
+    <p id="car-route-road-note" class="car-route-note">카카오모빌리티의 일반 자동차·현재 교통 기준 예상값이며, 구급차 긴급주행 소요시간을 보장하지 않습니다. 남은 거리·시간은 마지막 경로 계산 위치 기준입니다.</p>
     <p class="car-route-note">화면이 꺼지거나 앱이 백그라운드로 전환되면 GPS 추적이 중단될 수 있습니다. 화면을 벗어나면 안내를 종료하며, 복귀 후 ‘실시간 안내 시작’을 다시 눌러 주세요. 지도를 직접 움직이면 따라가기가 해제됩니다.</p>
-    <p class="car-route-note">경로: 카카오모빌리티 · 배경지도: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap 기여자</a></p>
+    <p class="car-route-note">배경지도: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap 기여자</a></p>
   </div>
 </section>
 <script defer src="/static/vendor/leaflet/leaflet.js"></script>
-<script defer src="/static/car-routes.js?v=2"></script>
+<script defer src="/static/car-routes.js?v=6"></script>

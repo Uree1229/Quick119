@@ -37,6 +37,21 @@ python scripts/test_suites.py all
 
 연구 검사는 정확한 소스 바이트·경로와 Git 제외 산출물에 묶인 경우가 있다. 루트 테스트 경로를 사용하는 과거 실험은 실험 기록이 지정한 커밋에서 실행한다. 테스트 폴더 정리 직전 트리는 `03f60cf`다. 과거 잠금을 현재 소스에 맞춰 다시 쓰면 원래 실험을 재현할 수 없으므로, 해당 소스·입력·결과를 함께 복원해 검사한다. 새 실험의 소스 해시는 `scripts/source_hash.py`를 사용한다. 재현 가능한 작은 입력은 저장소 안에 두고, 큰 원자료는 별도 백업의 위치·해시를 기록한다.
 
+## 10월 연구 실험 전체 재현
+
+11월 1일 백업의 `MANIFEST.json`에 기록된 SHA-256을 확인하고 백업 README의 일곱 묶음을 새 폴더에 복원한다. 루트에 `test_h1_online_engine.py`가 있고, `.codex-build/`에는 실험별 원자료와 빈 `tmp/` 폴더가 있어야 한다. 제품 체크아웃에는 `local-data` 검사에 필요한 원본 `simulation_results/`와 `outputs/` 자료를 준비한다.
+
+아래 명령은 현재 Quick119 저장소 루트에서 실행한다. `$researchRoot`는 복원한 폴더의 경로다.
+
+```powershell
+python scripts/restore_research_snapshot.py $researchRoot
+python scripts/test_suites.py all --research-root $researchRoot
+```
+
+복구 스크립트는 10월 28일 서버 커밋 `6fc079b`와 백업의 줄바꿈을 이용해 당시 서버 파일 다섯 개를 복원한다. 다섯 파일의 전체 바이트가 당시 `screen-source-freeze.json`의 SHA-256과 일치하는지 확인한 뒤 복원 폴더에 쓴다. 당시 열람한 문서 두 개도 10월 20일 보존 영수증과 대조해 복원한다. 같은 폴더에 다시 실행하면 일치하는 파일은 건너뛴다.
+
+`--research-root`를 지정하면 현재 소스에서 제품·로컬 자료·Node 검사를 실행하고, 별도 Python 프로세스에서 현재 연구 모듈 목록을 당시 경로와 입력으로 실행한다. 운영 기준과 기록을 대조하는 `test_algorithm_decision_20261030`, 서버의 현행 문의 계약을 검증하는 `test_inquiry_observations`와 `test_inquiry_policies`는 현재 체크아웃에서 실행한다. 운영 기준 대조를 위해 `outputs/algorithm_decision_20261030/` 원자료도 필요하다. 결과의 `research_snapshot`에 복원 경로와 그곳에서 실행한 수가 기록된다. 복원 모드에서는 기존 예상 실패 목록을 적용하지 않아 실패가 하나라도 있으면 종료 코드가 1이다. 연구만 확인하려면 `research --research-root $researchRoot`를 쓴다.
+
 ## 변경 범위별 확인
 
 전체 검증 전에 변경한 부분을 먼저 확인할 수 있다. `python scripts/test_suites.py python <테스트 모듈명>`으로 옮겨진 Python 검사를 골라 실행할 수 있다. 다음 검사는 각각 새로운 임시 자료를 사용한다. 구체적인 실행 환경과 네트워크 허용 여부는 해당 검사의 설정을 따른다.

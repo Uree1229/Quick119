@@ -1,5 +1,5 @@
 /* QUICK119: 정적 허용 목록만 저장. 의료정보와 일반 HTML은 저장하지 않음. */
-const CACHE_NAME = 'quick119-static-v2';
+const CACHE_NAME = 'quick119-static-v3';
 const OFFLINE_URL = '/static/offline.html';
 const STATIC_ASSETS = [
   "/static/quick119.css",

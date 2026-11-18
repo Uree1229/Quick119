@@ -92,7 +92,7 @@ class Quick119Tests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("퀵119", response.text)
         self.assertIn("응급상황 접수 시작", response.text)
-        for target in ["/transport/", "/patients", "/emergency/hospitals"]:
+        for target in ["/emergency?step=patient", "/patients", "/emergency/hospitals"]:
             self.assertIn(f'href="{target}"', response.text)
         self.assertIn('aria-current="page"', response.text)
         self.assertNotIn('class="med-header"', response.text)
@@ -101,7 +101,7 @@ class Quick119Tests(unittest.TestCase):
         response = self.client.get("/")
         self.assertNotIn('href="/voice-intake"', response.text)
         self.assertNotIn('음성 문진', response.text)
-        self.assertIn('class="emergency-cta" href="/transport/"', response.text)
+        self.assertIn('class="emergency-cta" href="/emergency?step=patient"', response.text)
 
     def test_empty_patient_selection(self):
         response = self.client.get("/emergency?step=patient")
@@ -109,7 +109,7 @@ class Quick119Tests(unittest.TestCase):
         self.assertIn("아직 등록된 환자가 없습니다", response.text)
         self.assertIn('href="/register"', response.text)
         self.assertIn('href="/emergency/check?patient_id=0"', response.text)
-        self.assertIn('href="/transport/"', response.text)
+        self.assertNotIn('href="/transport/"', response.text)
 
     def test_registered_selection_and_escaping(self):
         patient_id = self.register('<script>alert("synthetic")</script>')
@@ -119,17 +119,38 @@ class Quick119Tests(unittest.TestCase):
         self.assertNotIn('<script>alert("synthetic")', response.text)
         self.assertIn('action="/emergency/check" method="get"', response.text)
 
-    def test_emergency_and_old_voice_bookmark_enter_chat(self):
+    def test_emergency_and_old_voice_bookmark_fallback(self):
         response = self.client.get("/emergency", follow_redirects=False)
-        self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/transport/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("등록 환자 접수", response.text)
         voice = self.client.get('/voice-intake', follow_redirects=False)
         self.assertEqual(voice.status_code, 303)
-        self.assertEqual(voice.headers['location'], '/transport/')
+        self.assertEqual(voice.headers['location'], '/emergency?step=patient')
         selection = self.client.get("/emergency?step=patient", follow_redirects=False)
         self.assertEqual(selection.status_code, 200)
         self.assertIn("등록 환자 접수", selection.text)
         self.assertIn("미등록 환자 접수", selection.text)
+
+    def test_chat_entry_matches_client_and_configuration(self):
+        from fastapi.testclient import TestClient
+        for host, enabled, status in [
+            ("127.0.0.1", "1", 200), ("::1", "1", 200),
+            ("127.0.0.1", "0", 503), ("192.0.2.10", "1", 403),
+        ]:
+            with self.subTest(host=host, enabled=enabled), patch.dict(
+                os.environ, QUICK119_TEAM_CHAT_ENABLED=enabled, QUICK119_TEAM_CHAT_URL="http://127.0.0.1:18033"
+            ), TestClient(self.main.app, client=(host, 51000)) as client:
+                self.assertEqual(client.get("/transport/").status_code, status)
+                for page in ("/", "/emergency?step=patient", "/pwa-check", "/patients"):
+                    self.assertEqual('href="/transport/"' in client.get(page).text, status == 200, page)
+                destination = "/transport/" if status == 200 else "/emergency?step=patient"
+                self.assertIn(f'class="emergency-cta" href="{destination}"', client.get("/").text)
+                self.assertEqual(client.get(destination).status_code, 200)
+
+    def test_javascript_mime_with_nosniff(self):
+        response = self.client.get("/static/hospital-chat.js")
+        self.assertEqual(response.headers["content-type"].split(";")[0], "text/javascript")
+        self.assertEqual(response.headers["x-content-type-options"], "nosniff")
 
     def report_payload(self, **changes):
         payload = {"request_id": str(uuid4()), "patient_id": None,
@@ -455,6 +476,18 @@ class Quick119Tests(unittest.TestCase):
                       }});
                     ''')
                     browser.call('Page.navigate', url=f'http://127.0.0.1:{port}/emergency/hospitals?latitude=37.5&longitude=127')
+                    deadline = time.monotonic() + 12
+                    while time.monotonic() < deadline:
+                        ready = browser.call('Runtime.evaluate', expression="""
+                            location.pathname === '/emergency/hospitals' &&
+                            document.readyState === 'complete' && Boolean(window.L && document.querySelector('.car-route-button'))
+                        """, returnByValue=True)
+                        if ready.get('result', {}).get('value'):
+                            break
+                        time.sleep(.05)
+                    else:
+                        diagnostic = browser.call('Runtime.evaluate', expression="location.pathname + ' ' + document.body.innerText.slice(0, 400)", returnByValue=True)
+                        self.fail(f"Hospital route page did not initialize: {diagnostic}")
                     outcome = browser.call('Runtime.evaluate', expression='''(async () => {
                       const assert = (condition, message) => { if (!condition) throw new Error(message); };
                       const wait = async predicate => {
@@ -462,7 +495,6 @@ class Quick119Tests(unittest.TestCase):
                         while (!predicate()) { if (Date.now() > end) throw new Error('UI timeout');
                           await new Promise(resolve => setTimeout(resolve, 20)); }
                       };
-                      await wait(() => document.querySelector('.car-route-button') && window.L);
                       assert(window.gpsCount === 0, 'GPS must wait for a click: ' + window.gpsCount);
                       assert(document.querySelectorAll('#car-route-panel').length === 1, 'One route panel');
                       assert(document.querySelector('.hospital-card summary').textContent.includes('8분'), 'Comparison in card');
@@ -703,7 +735,7 @@ class Quick119Tests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         for name in ["check-mic", "check-gps", "check-secure", "check-display"]:
             self.assertIn(f'id="{name}"', response.text)
-        self.assertIn('href="/transport/"', response.text)
+        self.assertNotIn('href="/transport/"', response.text)
         voice = Path("static/chat-voice.js").read_text(encoding="utf-8")
         self.assertIn("window.isSecureContext", voice)
         self.assertIn("메시지를 직접 입력해 주세요.", voice)

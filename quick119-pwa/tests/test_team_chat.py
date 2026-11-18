@@ -261,7 +261,7 @@ class LiveTeamChat(unittest.TestCase):
         mobile.call('Page.navigate', url=self.api_url + '/')
         wait(mobile, "document.querySelector('.emergency-cta')")
         evaluate(mobile, "document.querySelector('.emergency-cta').click()")
-        wait(mobile, "document.getElementById('transport-case').textContent.includes('Q119-TEST-') && !document.querySelector('[data-transport-inquire]').disabled")
+        wait(mobile, "document.getElementById('transport-case').textContent.includes('Q119-TEST-') && !document.getElementById('transport-send').disabled")
         pid = evaluate(mobile, "new URLSearchParams(location.search).get('pid')")
         self.assertFalse(evaluate(mobile, "document.getElementById('transport-chat').hidden"))
         self.assertTrue(evaluate(mobile, "document.getElementById('transport-gps').hidden"))
@@ -269,7 +269,18 @@ class LiveTeamChat(unittest.TestCase):
         evaluate(mobile, "document.getElementById('transport-message').value='병원 확정 전 가상 환자 상태 보고';document.getElementById('transport-message').dispatchEvent(new Event('input'));document.getElementById('transport-message-form').requestSubmit()")
         wait(mobile, "document.getElementById('transport-message').value==='' && document.getElementById('transport-messages').textContent.includes('병원 확정 전 가상 환자 상태 보고')")
         self.call('GET', f'/api/hospitals/H01/patients/{pid}/conversation', status=403)
-        evaluate(mobile, "document.getElementById('transport-toggle').click()")
+        self.assertIsNone(evaluate(mobile, "document.querySelector('[data-transport-inquire]')"))
+        evaluate(mobile, """(async () => {
+          const button = id => document.getElementById('transport-' + id);
+          button('patient-info').click();
+          const closed = new Promise(resolve => button('review-panel').addEventListener('close', resolve, {once: true}));
+          button('review-close').click();
+          button('start-search').click();
+          await closed;
+          if (!button('review-panel').open) throw Error('Review did not reopen');
+          button('review-submit').click();
+        })()""")
+        wait(mobile, "document.querySelector('[data-transport-inquire=H01]') && !document.getElementById('transport-gps').hidden")
         evaluate(mobile, "document.querySelector('[data-transport-inquire=H01]').click()")
         wait(mobile, "document.getElementById('transport-inquiries').textContent.includes('문의 중')")
         staff.call('Page.navigate', url=self.api_url + '/hospital/?hid=H01&pid=' + pid)
@@ -397,6 +408,7 @@ class TransportBrowser(unittest.TestCase):
             'NAV_SOURCE': (ROOT / 'static/car-routes.js').read_text(encoding='utf-8'),
             'WORKSPACE_SOURCE': (ROOT / 'static/transport-workspace.js').read_text(encoding='utf-8'),
             'VOICE_SOURCE': (ROOT / 'static/chat-voice.js').read_text(encoding='utf-8'),
+            'REVIEW_SOURCE': (ROOT / 'static/patient-review.js').read_text(encoding='utf-8'),
             'CHAT_SOURCE': (ROOT / 'static/hospital-chat.js').read_text(encoding='utf-8'),
         }
         for key, source in sources.items():

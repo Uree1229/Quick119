@@ -135,7 +135,7 @@
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(map);
     tiles.on('tileerror', () => {
-      byId('car-route-map-status').textContent = '배경지도를 불러오지 못했습니다. 표시된 선은 카카오 자동차 경로입니다. 카카오맵에서도 확인할 수 있습니다.';
+      byId('car-route-map-status').textContent = '배경지도 일부를 불러오지 못했습니다.';
     });
     return map;
   }
@@ -164,7 +164,7 @@
       map.invalidateSize();
       // Never move a route or navigation view; frame only a fresh candidate overview.
       const frame = !!hospitals.length && !tracking && !routeLayer;
-      if (frame) map.fitBounds(candidateLayer.getBounds(), {...framePadding(40), maxZoom: 15});
+      if (frame) map.fitBounds(candidateLayer.getBounds(), {...framePadding(40), maxZoom: 15, animate: false});
       return frame;
     } catch (_) { return false; }
   }
@@ -191,7 +191,7 @@
         .bindTooltip(document.createTextNode(destination.name)).addTo(routeLayer);
       map.invalidateSize();
       // Never reset a user's map view during a navigation refresh/reroute.
-      if (!tracking && !preserveView) map.fitBounds(routeLayer.getBounds(), {...framePadding(24), maxZoom: 16});
+      if (!tracking && !preserveView) map.fitBounds(routeLayer.getBounds(), {...framePadding(24), maxZoom: 16, animate: false});
     } catch (_) {
       mapStatus.textContent = '지도 표시를 완료하지 못했습니다. 카카오맵에서 경로를 확인해 주세요.';
     }
@@ -221,6 +221,8 @@
       failures = 0;
       retryAt = 0;
       lastSuccess = {...origin, at: Date.now()};
+      const roadNote = byId('car-route-road-note');
+      if (roadNote) roadNote.hidden = data.provider === 'synthetic';
       const provider = byId('car-route-provider');
       if (provider) {
         provider.hidden = data.provider !== 'synthetic';

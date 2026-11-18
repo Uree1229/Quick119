@@ -1,5 +1,4 @@
 """Local synthetic workspace and a non-persistent adapter for the pinned hospital UI."""
-import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -14,8 +13,12 @@ templates = Jinja2Templates(directory=ROOT / 'templates')
 router = APIRouter()
 
 
-def chat_ui_enabled():
-    return os.getenv('QUICK119_TEAM_CHAT_ENABLED') == '1' and os.getenv('QUICK119_ENV', 'development') in {'development', 'test'}
+def chat_ui_enabled(request: Request) -> bool:
+    try:
+        local_only(request)
+    except HTTPException:
+        return False
+    return True
 
 
 def local_only(request):
