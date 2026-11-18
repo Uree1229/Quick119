@@ -7,12 +7,16 @@
   const status = $('voice-status'), interim = $('voice-interim'), root = $('workspace');
   const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
   const available = window.isSecureContext && !!Speech;
-  let enabled = false, listening = false, finishing = false, recognition = null, generation = 0;
+  let privateIntake = false, enabled = false, listening = false, finishing = false, recognition = null, generation = 0;
   const unavailable = !window.isSecureContext
-    ? '음성 입력에는 HTTPS 또는 localhost 접속이 필요합니다. 메시지를 직접 입력해 주세요.'
-    : '이 브라우저는 음성인식을 지원하지 않습니다. 메시지를 직접 입력해 주세요.';
+    ? '앱 마이크는 HTTPS 또는 localhost에서 사용할 수 있습니다. 휴대폰 키보드의 받아쓰기로 입력한 뒤 보내기를 누르거나 직접 입력해 주세요.'
+    : '이 브라우저는 음성인식을 지원하지 않습니다. 키보드의 받아쓰기를 사용하거나 메시지를 직접 입력해 주세요.';
+  const panel = $('voice-panel');
+  let showProblem = false;
   function render() {
-    start.disabled = !available || !enabled || listening || document.hidden || $('chat').hidden;
+    if (panel) panel.hidden = !listening && !showProblem;
+    start.disabled = !enabled || listening || document.hidden || $('chat').hidden;
+    if (!available) start.setAttribute('aria-expanded', String(showProblem));
     stop.hidden = !listening;
     stop.disabled = finishing;
     // Presentation hook for the listening panel; recognition state itself lives only here.
@@ -28,12 +32,17 @@
     generation++;
     recognition = null; listening = false; finishing = false; clearInterim();
     try { if (old?.abort) old.abort(); else old?.stop(); } catch (_) { /* Already ended. */ }
-    status.textContent = message;
+    showProblem = true; status.textContent = message;
     announce(); render();
   }
-  if (!available) status.textContent = unavailable;
+  if (!available) {
+    start.title = '받아쓰기 안내';
+    start.setAttribute('aria-label', start.title);
+    start.setAttribute('aria-controls', panel.id);
+    status.textContent = unavailable;
+  }
   document.addEventListener('quick119:composer-state', event => {
-    enabled = !!event.detail.enabled;
+    enabled = !!event.detail.enabled; privateIntake = !!event.detail.intake;
     if (!enabled && listening) cancel('대화 상태가 바뀌어 음성 입력을 중단했습니다. 확정된 초안을 확인해 주세요.');
     render();
   });
@@ -51,16 +60,22 @@
   window.addEventListener('pagehide', () => cancel('페이지를 벗어나 음성 입력을 중단했습니다.'));
 
   start.addEventListener('click', () => {
-    if (!available || !enabled || listening || document.hidden || $('chat').hidden) return;
+    if (!enabled || listening || document.hidden || $('chat').hidden) return;
+    // No speech support: the tap only shows or hides the explanation; recognition never starts.
+    if (!available) { showProblem = !showProblem; render(); return; }
     const ticket = ++generation, processed = new Set();
-    let failed = false;
+    const emptyAtStart = !input.value.trim();
+    const auto = privateIntake && emptyAtStart;
+    showProblem = false;
+    const segments = [];
+    let failed = false, unresolved = false;
     try {
       const current = new Speech();
       recognition = current;
-      current.lang = 'ko-KR'; current.continuous = true; current.interimResults = true;
+      current.lang = 'ko-KR'; current.continuous = !auto; current.interimResults = true; current.maxAlternatives = 3;
       current.onstart = () => {
         if (ticket !== generation || !listening) return;
-        status.textContent = '듣고 있습니다. 환자 상태를 보고해 주세요. 확인된 내용만 초안에 넣습니다.';
+        status.textContent = auto ? '환자 상태나 명령을 말해 주세요. 인식이 끝나면 접수에 반영합니다.' : '듣고 있습니다. 인식된 내용을 확인한 뒤 보내세요.';
       };
       current.onresult = event => {
         if (ticket !== generation || !listening) return;
@@ -68,7 +83,10 @@
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const result = event.results[i];
           if (result.isFinal) {
-            if (!processed.has(i)) { processed.add(i); final += result[0].transcript.trim() + ' '; }
+            if (!processed.has(i)) {
+              processed.add(i); final += result[0].transcript.trim() + ' ';
+              segments.push(Array.from(result).map(r => r.transcript.trim()).filter(Boolean));
+            }
           } else provisional += result[0].transcript;
         }
         if (final.trim()) {
@@ -81,6 +99,7 @@
             return;
           }
         }
+        unresolved = !!provisional.trim();
         interim.textContent = provisional ? '인식 중 · 아직 초안에 반영하지 않음: ' + provisional : '';
         interim.hidden = !provisional;
       };
@@ -94,15 +113,31 @@
       current.onend = () => {
         if (ticket !== generation) return;
         listening = false; finishing = false; recognition = null; clearInterim();
-        if (!failed) status.textContent = '음성 입력을 마쳤습니다. 초안을 확인하고 보내기를 눌러 주세요.';
+        if (!failed) {
+          showProblem = unresolved || !segments.length;
+          status.textContent = showProblem ? '인식이 끝난 내용을 확인하거나 다시 말해 주세요.' : '';
+        }
         announce(); render();
+        if (!failed && segments.length && !unresolved) {
+          const alternatives = [];
+          for (const [i, segment] of segments.entries()) {
+            for (const other of segment.slice(1)) {
+              const phrase = segments.map((part, index) => index === i ? other : part[0]).join(' ');
+              if (phrase !== input.value.trim() && !alternatives.includes(phrase)) alternatives.push(phrase);
+            }
+          }
+          const contact = emptyAtStart && window.Quick119Intake?.isHospitalCall(input.value.trim());
+          document.dispatchEvent(new CustomEvent('quick119:speech-final', {detail: {
+            text: input.value.trim(), alternatives: auto || contact ? alternatives : [], submit: auto || !!contact
+          }}));
+        }
       };
       listening = true; finishing = false; clearInterim(); announce(); render();
       current.start();
     } catch (_) {
       cancel('음성 입력을 시작하지 못했습니다. 직접 입력하거나 다시 시도해 주세요.');
       // Constructor failure precedes listening=true.
-      if (!listening) { status.textContent = '음성 입력을 시작하지 못했습니다. 직접 입력하거나 다시 시도해 주세요.'; render(); }
+      if (!listening) { showProblem = true; status.textContent = '음성 입력을 시작하지 못했습니다. 직접 입력하거나 다시 시도해 주세요.'; render(); }
     }
   });
   stop.addEventListener('click', () => {

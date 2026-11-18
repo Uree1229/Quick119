@@ -6,7 +6,12 @@
 .app-shell--workspace{display:flex;flex-direction:column;height:100vh;height:100dvh;min-height:0;padding-bottom:0}
 .app-shell--workspace>.environment-note,.app-shell--workspace>.app-header{flex:none}
 .transport-page{flex:1;min-height:0;display:flex;flex-direction:column}
-@media(min-width:600px){.app-shell--workspace{height:calc(100dvh - 48px);min-height:600px}}
+@media(min-width:600px){.app-shell--workspace{height:calc(100dvh - 48px)}}
+@media (min-width:600px) and (max-height:560px){
+  .app-shell--workspace{height:100dvh;margin-block:0;border-radius:0}
+  .app-shell--workspace>.environment-note{padding-block:2px}
+  .app-shell--workspace>.app-header{min-height:44px;padding-block:max(2px,env(safe-area-inset-top)) 2px}
+}
 
 /* ---------- Tokens, icons ---------- */
 #transport-workspace{
@@ -34,8 +39,9 @@
   --i-external:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 4h6v6M20 4l-9 9M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10'/%3E%3C/svg%3E");
   --av-system:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 6.5v11M6.5 12h11' stroke='white' stroke-width='3.4' stroke-linecap='round'/%3E%3C/svg%3E");
   --av-hospital:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 20.5V6a1.5 1.5 0 0 1 1.5-1.5h11A1.5 1.5 0 0 1 19 6v14.5M3 20.5h18M10 20.5v-4h4v4M12 7.5v5M9.5 10h5'/%3E%3C/svg%3E");
-  position:relative;display:flex;flex-direction:column;height:min(calc(100dvh - 24px),880px);min-height:540px;min-width:0;
+  container:transport / size;position:relative;display:flex;flex-direction:column;height:min(calc(100dvh - 24px),880px);min-height:min(540px,100dvh);min-width:0;
   background:var(--tw-bg);color:var(--tw-ink);font-size:15px;line-height:1.5;isolation:isolate;overflow:hidden;
+  overflow:clip; /* clip, not a hidden scroller: caret scrolling while typing cannot shift the header */
   border:1px solid var(--tw-line);border-radius:18px;
 }
 .app-shell--workspace #transport-workspace{flex:1;height:auto;min-height:0;border:0;border-radius:0}
@@ -82,8 +88,9 @@
 .tw-people li::before{content:"";display:inline-block;width:6px;height:6px;margin-right:5px;vertical-align:1px;border-radius:50%;background:#94a3b8}
 .tw-people [data-role=system]::before{background:var(--tw-red)}
 .tw-people [data-role=crew]::before{background:var(--tw-crew)}
-.tw-people [data-role=hospital]{flex:0 1 auto;min-width:0;border-color:#acd9c2;background:var(--tw-green-soft);color:var(--tw-green)}
-.tw-people [data-role=hospital]::before{background:var(--tw-green)}
+.tw-people [data-role=hospital]{flex:0 1 auto;min-width:0;padding-left:3px;border-color:#acd9c2;background:var(--tw-green-soft);color:var(--tw-green)}
+/* A hospital joins only once it is the confirmed destination, so its chip says so. The tag is CSS-only: textContent stays the name. */
+.tw-people [data-role=hospital]::before{content:"목적지";width:auto;height:16px;margin-right:5px;padding:0 5px;border-radius:8px;background:var(--tw-green);color:#fff;font-size:10.5px;font-weight:900;line-height:16px;vertical-align:0}
 /* Once a hospital joins, system/crew shrink to colour dots (same colours as the chat avatars) so the hospital name fits. */
 .tw-people:has([data-role=hospital]) li:not([data-role=hospital]){position:relative;width:22px;padding:0;text-indent:24px}
 .tw-people:has([data-role=hospital]) li:not([data-role=hospital])::before{position:absolute;left:7px;top:7px;margin:0}
@@ -103,8 +110,17 @@
 .tw-steps [data-state=done] .tw-step-dot::before{content:"";width:12px;height:12px;background:#fff;-webkit-mask:var(--i-check) center/contain no-repeat;mask:var(--i-check) center/contain no-repeat}
 .tw-steps [data-state=current]{color:var(--tw-red)}
 .tw-steps [data-state=current] .tw-step-dot{border-color:var(--tw-red);background:var(--tw-red);color:#fff;box-shadow:0 0 0 4px #e5484d24}
+/* After confirmation the destination chip gets its own full-width line, and the finished stepper and the inquiry tray
+   (the confirmed row plus the rows the server keeps as 문의 종료) fold. closed has no hospital chip, so it keeps the confirmed row. */
+#transport-workspace[data-stage=joined] :is(.tw-inquiries,.tw-steps){display:none}
+#transport-workspace[data-stage=closed] :is(.tw-steps,.transport-inquiry:not([data-state=CONFIRMED])){display:none}
+#transport-workspace[data-stage=joined] .tw-head-row{flex-wrap:wrap;row-gap:6px}
+#transport-workspace[data-stage=joined] .tw-head-main{display:contents}
+#transport-workspace[data-stage=joined] .tw-title{flex:1 1 0;min-width:0}
+#transport-workspace[data-stage=joined] .tw-people{order:5;flex:1 0 100%;margin-top:0!important}
 
 /* ---------- Status banners, inquiry tray ---------- */
+.tw-updates,.tw-dock-tools{display:contents}
 #transport-workspace .tw-banner{flex:none;position:relative;z-index:5;display:flex;align-items:flex-start;gap:8px;padding:9px 16px;font-size:13px;font-weight:700;line-height:1.5;overflow-wrap:anywhere}
 #transport-workspace .tw-banner::before{content:"";flex:none;width:17px;height:17px;margin-top:1px;background:currentColor;-webkit-mask:var(--i-alert) center/contain no-repeat;mask:var(--i-alert) center/contain no-repeat}
 .tw-connection{background:var(--tw-amber-soft);color:var(--tw-amber);border-bottom:1px solid #f0dcb4}
@@ -113,17 +129,26 @@
 /* Live state is announced to screen readers but needs no banner: the header dot and participants show it. */
 #transport-workspace[data-connection=live] .tw-connection{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
 .tw-error{background:var(--tw-red-soft);color:#a3262b;border-bottom:1px solid #f5c7c9}
-.tw-inquiries{position:relative;z-index:4;flex:none;display:flex;flex-direction:column;gap:6px;padding:8px 12px;background:#fff;border-bottom:1px solid var(--tw-line);max-height:40%;overflow-y:auto}
+/* Inquiry tray: one horizontal strip (57px) instead of a 59px row per hospital. The chip that needs a decision
+   (ACCEPTED with 목적지 확정) or names the destination comes first in DOM and keyboard order; the next chip peeks at the edge.
+   It is the first thing to give way when the screen is short (the chat column below never gets smaller than its dock). */
+.tw-inquiries{position:relative;z-index:4;flex:0 1 auto;min-height:min(55px,40%);display:flex;align-items:stretch;gap:6px;padding:6px 12px;background:#fff;border-bottom:1px solid var(--tw-line);overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scroll-snap-type:x proximity;scroll-padding-inline:12px;scrollbar-width:none}
+.tw-inquiries::-webkit-scrollbar{display:none}
 .tw-inquiries:empty{display:none}
-.transport-inquiry{display:flex;align-items:center;gap:10px;min-height:48px;padding:6px 6px 6px 10px;border:1px solid var(--tw-line);border-radius:14px;background:var(--tw-soft)}
-.transport-inquiry[data-state=ACCEPTED]{border-color:#9fd3b8;background:var(--tw-green-soft);box-shadow:0 3px 10px #1b7a521f}
+.transport-inquiry{flex:0 0 auto;max-width:calc(100% - 40px);display:flex;align-items:center;gap:8px;min-height:44px;padding:0 10px 0 8px;border:1px solid var(--tw-line);border-radius:12px;background:var(--tw-soft);scroll-snap-align:start}
+.transport-inquiry:has(.tw-btn-confirm){padding-right:1px}
+.transport-inquiry[data-state=ACCEPTED]{border-color:#9fd3b8;background:var(--tw-green-soft)}
 .transport-inquiry[data-state=CONFIRMED]{border-color:#bcd0e8;background:var(--tw-navy-soft)}
-.tw-inquiry-icon{position:relative;flex:none;width:32px;height:32px;border-radius:10px;background:#fff;color:var(--tw-navy);box-shadow:0 1px 3px #17375e14}
-.tw-inquiry-icon::before{content:"";position:absolute;inset:6px;background:currentColor;-webkit-mask:var(--i-hospital) center/contain no-repeat;mask:var(--i-hospital) center/contain no-repeat}
+/* Two or more hospitals accepted: their rows take the full width so no 목적지 확정 hides behind the scroll. */
+.tw-inquiries:has([data-state=ACCEPTED] ~ [data-state=ACCEPTED]){flex-wrap:wrap;max-height:40%;overflow-x:hidden;overflow-y:auto}
+.tw-inquiries:has([data-state=ACCEPTED] ~ [data-state=ACCEPTED]) .transport-inquiry[data-state=ACCEPTED]{flex:1 0 100%;max-width:none}
+.tw-inquiry-icon{position:relative;flex:none;width:24px;height:24px;border-radius:8px;background:#fff;color:var(--tw-navy);box-shadow:0 1px 3px #17375e14}
+.tw-inquiry-icon::before{content:"";position:absolute;inset:4px;background:currentColor;-webkit-mask:var(--i-hospital) center/contain no-repeat;mask:var(--i-hospital) center/contain no-repeat}
 [data-state=ACCEPTED] .tw-inquiry-icon{color:var(--tw-green)}
-.tw-inquiry-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-.tw-inquiry-copy strong{font-size:14px;font-weight:900;color:var(--tw-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#transport-workspace .tw-btn-confirm{flex:none;min-height:40px;padding:0 12px;border-radius:11px;background:var(--tw-navy);color:#fff;font-size:13px}
+.tw-inquiry-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.tw-inquiry-copy strong{font-size:13px;line-height:18px;font-weight:900;color:var(--tw-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tw-inquiry-copy .tw-pill{height:18px;padding:0 7px;font-size:11px}
+#transport-workspace .tw-btn-confirm{flex:none;min-height:44px;margin:-1px -1px -1px 0;padding:0 11px;border-radius:10px;background:var(--tw-navy);color:#fff;font-size:13px}
 .tw-pill{display:inline-flex;align-items:center;gap:5px;align-self:flex-start;height:22px;padding:0 9px;border-radius:11px;background:#e6ecf4;color:#40576f;font-size:11.5px;font-weight:900;white-space:nowrap}
 .tw-pill:is([data-state=PENDING],[data-state=CHECKING]){background:var(--tw-amber-soft);color:var(--tw-amber)}
 .tw-pill:is([data-state=PENDING],[data-state=CHECKING])::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
@@ -135,7 +160,7 @@
 /* ---------- Chat log ---------- */
 .tw-chat{flex:1;min-height:0;display:flex;flex-direction:column}
 .tw-log{position:relative;flex:1;min-height:0}
-#transport-messages{position:absolute;inset:0;display:flex;flex-direction:column;padding:12px 14px 20px;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scroll-padding-bottom:20px}
+#transport-messages{position:absolute;inset:0;display:flex;flex-direction:column;padding:8px 12px 20px;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scroll-padding-bottom:20px}
 #transport-messages:focus-visible{outline-offset:-3px}
 .tw-room{align-self:center;width:100%;max-width:360px;margin:2px 0 6px;padding:10px 12px 2px;border:1px dashed #c6d2e1;border-radius:16px;background:#ffffffa6;color:var(--tw-muted);font-size:11.5px;line-height:1.55;text-align:center}
 .tw-room-more summary{display:inline-flex;align-items:center;gap:4px;min-height:36px;color:#4b5f77;font-weight:800;cursor:pointer}
@@ -148,36 +173,39 @@
 .tw-room-case:empty{display:none}
 .tw-room-note{margin-top:4px!important}
 .tw-intro{align-self:center;max-width:320px;margin:26px auto!important;padding:16px 18px;border-radius:16px;background:#fff;color:#4b5f77;font-size:13.5px;line-height:1.7;text-align:center;box-shadow:0 2px 8px #17375e0f}
-.transport-message{display:grid;grid-template-columns:34px minmax(0,1fr);column-gap:8px;align-self:flex-start;max-width:86%;margin-top:14px;min-width:0}
-.transport-message::before{content:"";grid-row:1/span 3;align-self:start;width:34px;height:34px;border-radius:12px;background:var(--tw-red) var(--av-system) center/19px no-repeat;box-shadow:0 2px 6px #e5484d33}
-.transport-message[data-role=hospital]::before{border-radius:50%;background:var(--tw-green) var(--av-hospital) center/19px no-repeat;box-shadow:0 2px 6px #1b7a5233}
-.transport-sender{grid-column:2;justify-self:start;margin:0 0 3px 2px;color:#55687f;font-size:11.5px;font-weight:800;overflow-wrap:anywhere}
-.transport-bubble{grid-column:2;justify-self:start;max-width:100%;margin:0!important;padding:10px 13px;border:1px solid #dde5ee;border-radius:4px 16px 16px 16px;background:#fff;color:var(--tw-ink);font-size:15px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;box-shadow:0 1px 2px #17375e0d}
-.transport-time{grid-column:2;justify-self:start;margin:3px 0 0 4px;color:#8794a6;font-size:11px;font-variant-numeric:tabular-nums}
+/* Received messages: avatar, sender, then the bubble with its time beside it (the time wraps under only when it cannot fit).
+   The bubble cap uses the viewport, not %, so a short message is never squeezed by its own shrink-to-fit width. */
+.transport-message{position:relative;align-self:flex-start;max-width:100%;min-width:0;margin-top:10px;padding-left:36px}
+.transport-message::before{content:"";position:absolute;left:0;top:0;width:30px;height:30px;border-radius:10px;background:var(--tw-red) var(--av-system) center/17px no-repeat;box-shadow:0 2px 6px #e5484d33}
+.transport-message[data-role=hospital]::before{border-radius:50%;background:var(--tw-green) var(--av-hospital) center/17px no-repeat;box-shadow:0 2px 6px #1b7a5233}
+.transport-sender{display:block;margin:0 0 2px 2px;color:#55687f;font-size:11.5px;font-weight:800;line-height:1.3;overflow-wrap:anywhere}
+.transport-bubble{display:inline-block;vertical-align:bottom;max-width:calc(min(100vw,480px) - 118px);margin:0!important;padding:7px 12px;border:1px solid #dde5ee;border-radius:4px 16px 16px 16px;background:#fff;color:var(--tw-ink);font-size:15px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;box-shadow:0 1px 2px #17375e0d}
+.transport-time{display:inline-block;vertical-align:bottom;margin:0 0 2px 5px;color:#5a6a7f;font-size:11px;line-height:1.3;white-space:nowrap;font-variant-numeric:tabular-nums}
 .transport-message[data-role=hospital] .transport-bubble{border-color:#bfe2cf}
 .transport-message[data-role=hospital] .transport-sender{color:var(--tw-green)}
-.transport-message[data-role=patient]{align-self:flex-end;grid-template-columns:minmax(0,1fr);max-width:84%}
+/* Sent messages: bubble on the right, its time to the left of it. */
+.transport-message[data-role=patient]{display:flex;flex-direction:row-reverse;align-items:flex-end;column-gap:5px;align-self:flex-end;padding-left:0}
 .transport-message[data-role=patient]::before{display:none}
-.transport-message[data-role=patient] :is(.transport-bubble,.transport-time){grid-column:1;justify-self:end}
-.transport-message[data-role=patient] .transport-bubble{border:0;border-radius:16px 4px 16px 16px;background:linear-gradient(135deg,#2c64b0,var(--tw-crew));color:#fff;box-shadow:0 3px 10px #24569b2e}
-.transport-message[data-role=patient] .transport-time{margin:3px 4px 0 0}
+.transport-message[data-role=patient] .transport-bubble{flex:0 1 auto;min-width:0;max-width:none;border:0;border-radius:16px 4px 16px 16px;background:linear-gradient(135deg,#2c64b0,var(--tw-crew));color:#fff;box-shadow:0 3px 10px #24569b2e}
+.transport-message[data-role=patient] .transport-time{flex:none;margin:0 0 2px}
 :is(.transport-message[data-role=patient],.transport-message[data-cont=true]) .transport-sender{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
-.transport-message[data-cont=true]{margin-top:5px}
-.transport-message[data-cont=true]::before{visibility:hidden;height:0}
+.transport-message[data-cont=true]{margin-top:3px}
+.transport-message[data-cont=true]::before{visibility:hidden}
 .transport-message[data-cont=true]:not([data-role=patient]) .transport-bubble{border-top-left-radius:16px}
 .transport-message[data-cont=true][data-role=patient] .transport-bubble{border-top-right-radius:16px}
-.transport-message[data-kind=notice]{display:block;align-self:center;max-width:94%;margin-top:14px;text-align:center}
+/* System events: one slim band each, the time closing the sentence. */
+.transport-message[data-kind=notice]{display:block;align-self:center;max-width:100%;margin-top:10px;padding:4px 11px;border-radius:12px;background:#e9eff6;color:#3f546c;font-size:12px;line-height:1.45;text-align:center}
+.transport-message[data-kind=notice]+.transport-message[data-kind=notice]{margin-top:4px}
 .transport-message[data-kind=notice]::before{display:none}
 .transport-message[data-kind=notice] .transport-sender{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
-.transport-message[data-kind=notice] .transport-bubble{display:inline-block;padding:5px 12px;border:0;border-radius:14px;background:#dfe7f1;color:#41566f;font-size:12.5px;font-weight:700;line-height:1.55;box-shadow:none}
-.transport-message[data-kind=notice] :is(.transport-bubble,.transport-time){justify-self:center}
-.transport-message[data-kind=notice] .transport-time{display:block;margin:2px 0 0}
-.tw-jump{position:absolute;left:50%;bottom:12px;z-index:3;display:inline-flex;align-items:center;gap:6px;height:40px;padding:0 16px;border:0;border-radius:20px;background:var(--tw-navy);color:#fff;font-size:13px;font-weight:800;box-shadow:0 8px 20px #17375e47;transform:translateX(-50%)}
+.transport-message[data-kind=notice] .transport-bubble{display:inline;max-width:none;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:inherit;font-size:12px;font-weight:700;line-height:1.45}
+.transport-message[data-kind=notice] .transport-time{display:inline;margin:0 0 0 6px;font-weight:600}
+.tw-jump{position:absolute;left:50%;bottom:18px;z-index:3;display:inline-flex;align-items:center;gap:6px;height:44px;padding:0 16px;border:0;border-radius:20px;background:var(--tw-navy);color:#fff;font-size:13px;font-weight:800;box-shadow:0 8px 20px #17375e47;transform:translateX(-50%)}
 .tw-jump::before{content:"";width:16px;height:16px;background:currentColor;-webkit-mask:var(--i-down) center/contain no-repeat;mask:var(--i-down) center/contain no-repeat}
 
 /* ---------- Dock: notices, next step, voice, composer ---------- */
-.tw-dock{position:relative;z-index:3;flex:none;padding:8px 12px calc(10px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid var(--tw-line);box-shadow:0 -6px 18px #17375e0f}
-.tw-dock>*{margin-bottom:8px}
+.tw-dock{position:relative;z-index:3;flex:none;padding:12px 12px calc(10px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid var(--tw-line);box-shadow:0 -6px 18px #17375e0f}
+.tw-dock>:not(.tw-dock-tools),.tw-dock-tools>*{margin-bottom:8px}
 .tw-dock>:last-child,.tw-dock>.tw-form{margin-bottom:0}
 #transport-workspace .tw-notice{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:46px;padding:8px 14px;border:1px solid #f0d2a0;border-radius:12px;background:var(--tw-amber-soft);color:var(--tw-amber);font-size:14px;font-weight:800}
 #transport-workspace .tw-notice::before{content:"";width:18px;height:18px;background:currentColor;-webkit-mask:var(--i-refresh) center/contain no-repeat;mask:var(--i-refresh) center/contain no-repeat}
@@ -187,19 +215,29 @@
 .tw-pending-actions:has(button:not([hidden])){margin-top:6px}
 #transport-workspace .tw-pending-actions .tw-btn{flex:1 1 140px;min-height:40px;font-size:13px}
 .tw-pending:not(:has(#transport-pending:not(:empty))):not(:has(button:not([hidden]))){display:none}
-.tw-next{display:none;align-items:center;gap:10px;padding:10px 10px 10px 12px;border:1px solid #d3e0ef;border-radius:16px;background:linear-gradient(135deg,#f4f8fd,var(--tw-navy-soft))}
-#transport-workspace:is([data-stage=report],[data-stage=review],[data-stage=candidates]) .tw-next{display:flex}
-#transport-workspace:is([data-voice=listening],[data-voice=finishing]) .tw-next{display:none}
-.tw-next-copy{flex:1;min-width:0}
-.tw-next-copy strong{display:block;color:var(--tw-navy);font-size:13.5px;font-weight:900;letter-spacing:-.3px}
-#transport-search-status{margin-top:2px!important;color:#52667c;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
-.tw-next-actions{display:flex;flex-direction:column;gap:6px;flex:none}
-#transport-workspace .tw-next-actions .tw-btn{min-height:44px;padding:0 13px}
+/* Next step: one bar, title left and a 44px button right, at every width. The usual hint is for screen readers only;
+   a blocking reason or the stale-search warning (patient-review.js: data-kind=blocked|stale) gets its own line under the
+   bar. Reasons that only last while a request runs (data-kind=busy) stay hidden so the bar does not jump on every send. */
+.tw-next{display:none;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px 8px;padding:4px 4px 4px 12px;border:1px solid #d3e0ef;border-radius:14px;background:linear-gradient(135deg,#f4f8fd,var(--tw-navy-soft))}
+#transport-workspace:is([data-stage=report],[data-stage=review],[data-stage=candidates]) .tw-next{display:grid}
+.tw-next-copy{display:contents}
+.tw-next-copy strong{grid-row:1;grid-column:1;min-width:0;color:var(--tw-navy);font-size:13.5px;font-weight:900;letter-spacing:-.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#transport-search-status{grid-row:2;grid-column:1/-1;margin:0 8px 4px 0!important;color:#52667c;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+#transport-search-status:not([data-kind=blocked]):not([data-kind=stale]){position:absolute;width:1px;height:1px;margin:-1px!important;padding:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
+#transport-search-status[data-kind=stale]{color:var(--tw-amber);font-weight:800}
+.tw-next-actions{grid-row:1;grid-column:2;display:flex;gap:6px}
+#transport-workspace .tw-next-actions .tw-btn{min-height:44px;padding:0 12px}
 #transport-start-search::before,#transport-open-map::before{content:"";width:17px;height:17px;background:currentColor;-webkit-mask:var(--i-search) center/contain no-repeat;mask:var(--i-search) center/contain no-repeat}
 #transport-open-map::before{-webkit-mask-image:var(--i-map);mask-image:var(--i-map)}
 #transport-open-map{display:none!important}
 [data-stage=candidates] #transport-open-map{display:inline-flex!important}
-#transport-workspace[data-stage=candidates] #transport-start-search{min-height:36px;background:#fff;color:var(--tw-navy);border-color:#c9d6e5;box-shadow:none;font-size:12.5px}
+/* Candidates: the two actions share the bar (the cards on the map say which hospitals). */
+#transport-workspace[data-stage=candidates] .tw-next{padding:4px}
+#transport-workspace[data-stage=candidates] .tw-next-copy strong{display:none}
+#transport-workspace[data-stage=candidates] .tw-next-actions{grid-column:1/-1}
+#transport-workspace[data-stage=candidates] .tw-next-actions .tw-btn{flex:1 1 0;padding:0 10px}
+#transport-workspace[data-stage=candidates] #transport-start-search{flex-grow:1.5;background:#fff;color:var(--tw-navy);border-color:#c9d6e5;box-shadow:none;font-size:12.5px}
+#transport-workspace[data-stage=candidates] #transport-start-search::before{display:none}
 /* Before the first report the search stays available (as before the redesign) but reads as the second step. */
 #transport-workspace[data-stage=report] #transport-start-search:not(:disabled){background:#fff;color:var(--tw-navy);border-color:#c9d6e5;box-shadow:none}
 .tw-form{display:flex;flex-direction:column;margin:0}
@@ -209,7 +247,9 @@
 /* Always-visible disclosures (provider speech processing, synthetic-only data) next to where the crew types or speaks. */
 #transport-workspace .tw-voice-note{margin-top:1px;color:#7d8a9b;font-size:11px;line-height:1.45;overflow-wrap:anywhere}
 #transport-workspace:is([data-voice=listening],[data-voice=finishing]) .tw-voice-note{color:#8a4a4e}
-#transport-workspace .tw-synthetic-line{margin:5px 0 0;font-size:11.5px;line-height:1.45;text-align:center}
+/* Synthetic-data warning: a small tab on the dock's top edge, visible in every stage and while typing (grows upward if it wraps). */
+#transport-workspace .tw-synthetic-line{position:absolute;bottom:calc(100% - 8px);left:10px;right:10px;z-index:4;display:block;width:fit-content;max-width:calc(100% - 20px);margin:0 auto;padding:1px 9px;border:1px solid #f5c7c9;border-radius:10px;background:#fff;font-size:11px;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 4px #17375e14}
+#transport-workspace .tw-synthetic-line .tw-i{width:12px;height:12px;margin-right:4px;vertical-align:-2px}
 .transport-voice-interim{margin-top:3px!important;color:#6b4547;font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 .tw-voice-copy{flex:1;min-width:0}
 .tw-wave{display:none;align-items:center;gap:3px;flex:none;height:30px}
@@ -226,6 +266,10 @@
 #transport-workspace .tw-mic::before{content:"";width:24px;height:24px;background:currentColor;-webkit-mask:var(--i-mic) center/contain no-repeat;mask:var(--i-mic) center/contain no-repeat}
 #transport-workspace .tw-mic:not(:disabled):hover{background:#dfe9f6}
 #transport-workspace .tw-mic:disabled{opacity:.4}
+/* No speech support (e.g. the phone demo over HTTP): the mic becomes a keyboard-accessible help button, grey with an amber '!';
+   a tap opens the voice panel with how to dictate instead (chat-voice.js). */
+#transport-workspace[data-voice=unavailable] .tw-mic{position:relative;background:#eef1f5;color:#9aa6b5}
+#transport-workspace[data-voice=unavailable] .tw-mic::after{content:"!";position:absolute;top:1px;right:1px;width:17px;height:17px;border:2px solid #fff;border-radius:50%;background:#c27c0e;color:#fff;font-size:10.5px;font-weight:900;line-height:13px;text-align:center}
 #transport-workspace:is([data-voice=listening],[data-voice=finishing]) :is(.tw-mic,.tw-send){display:none}
 #transport-message:placeholder-shown{overflow:hidden}
 #transport-workspace .tw-mic-stop{display:inline-flex;align-items:center;gap:6px;flex:none;height:48px;padding:0 15px 0 13px;border:0;border-radius:24px;background:var(--tw-red);color:#fff;font-size:14.5px;font-weight:800;box-shadow:0 0 0 0 #e5484d66}
@@ -383,6 +427,66 @@ html:has(#transport-review-panel[open]),body:has(#transport-review-panel[open]){
 #transport-workspace .tw-dialog-actions .tw-btn{flex:1;min-height:50px;font-size:15px}
 #transport-workspace .tw-dialog-actions #transport-review-submit{flex:2}
 
+/* ---------- Short screens: the dock wins over the top area ----------
+   The tray gives way first (see .tw-inquiries) and the chat column never gets shorter than its dock, so the composer
+   and send button stay above an Android keyboard even if typing mode (below) is not active. */
+.app-shell--workspace .tw-chat{min-height:auto}
+@media (max-height:560px){
+  #transport-message{max-height:94px}
+  #transport-workspace .tw-dock{padding-bottom:max(8px,env(safe-area-inset-bottom))}
+}
+
+/* ---------- Typing mode: soft keyboard open (transport-workspace.js sets data-kb="open") ----------
+   Only while typing: the brand bar folds, the header becomes one row (connection dot, title or the 목적지 chip, the
+   current step, patient info and map as icons), the dock keeps what typing needs, and the inquiry tray keeps only rows
+   with 목적지 확정. Everything returns as soon as the keyboard closes. */
+html:has(#transport-workspace[data-kb=open]){scroll-behavior:auto}
+body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
+.app-shell--workspace:has(#transport-workspace[data-kb=open])>:is(.app-header,.environment-note){display:none}
+/* Standalone and embedded chat use the visible viewport even when the keyboard only shrinks visualViewport. */
+.app-shell--workspace:has(#transport-workspace[data-kb=open]){height:var(--tw-vvh,100dvh);min-height:0;margin-block:0}
+#transport-workspace[data-kb=open]{height:var(--tw-vvh,100dvh);min-height:0}
+#transport-workspace[data-kb=open] .tw-chat{min-height:auto}
+#transport-workspace[data-kb=open] .tw-head{display:flex;align-items:center;gap:8px;padding:calc(6px + env(safe-area-inset-top)) 10px 6px 14px}
+#transport-workspace[data-kb=open] .tw-head-row{display:contents}
+#transport-workspace[data-kb=open] .tw-head-main{order:0;flex:1;min-width:0;display:flex;align-items:center;gap:6px}
+#transport-workspace[data-kb=open] .tw-title{flex:none;font-size:16px}
+#transport-workspace[data-kb=open] .tw-head-main:has([data-role=hospital]) .tw-title{font-size:0!important;line-height:0}
+#transport-workspace[data-kb=open] .tw-head-main:has([data-role=hospital]) .tw-title::after{margin-left:0;vertical-align:middle}
+#transport-workspace[data-kb=open] .tw-people{order:0;flex:1;min-width:0;margin-top:0!important}
+#transport-workspace[data-kb=open] .tw-people li:not([data-role=hospital]){display:none}
+#transport-workspace[data-kb=open] .tw-steps{order:1;flex:none;padding:0!important;gap:0}
+#transport-workspace[data-kb=open] .tw-steps li{display:none;flex:none}
+#transport-workspace[data-kb=open] .tw-steps li[data-state=current],
+#transport-workspace[data-kb=open] .tw-steps:not(:has([data-state=current])) li:last-child{display:flex}
+#transport-workspace[data-kb=open] .tw-steps li::after{display:none}
+#transport-workspace[data-kb=open] .tw-head-actions{order:2;gap:6px}
+#transport-workspace[data-kb=open] .tw-switch{width:48px;padding:0;justify-content:center;font-size:0}
+/* Keep the search live region in the accessibility tree while its actions are folded. */
+#transport-workspace:is([data-kb=open],[data-voice=listening],[data-voice=finishing]) .tw-next{
+  position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);margin:0;padding:0;border:0;
+}
+#transport-workspace:is([data-kb=open],[data-voice=listening],[data-voice=finishing]) .tw-next :is(.tw-next-copy,.tw-next-actions){display:none}
+#transport-workspace[data-kb=open] .tw-dock{padding:10px 10px 6px}
+#transport-workspace[data-kb=open] :is(.tw-dock>:not(.tw-synthetic-line,.tw-dock-tools),.tw-dock-tools>*){margin-bottom:6px}
+#transport-workspace[data-kb=open] .tw-dock>:is(:last-child,.tw-form){margin-bottom:0}
+#transport-workspace[data-kb=open] .tw-mic:disabled,
+#transport-workspace[data-kb=open][data-voice=unavailable] :is(.tw-mic,.tw-voice){display:none}
+/* A wider draft: send becomes a 48px icon (its text stays the accessible name); 재시도 keeps its label. */
+#transport-workspace[data-kb=open]:not([data-pending=true]) .tw-send{width:48px;padding:0;gap:0;justify-content:center;font-size:0}
+#transport-workspace[data-kb=open]:not([data-pending=true]) .tw-send::before{width:20px;height:20px}
+#transport-workspace[data-kb=open] #transport-message{max-height:94px}
+/* Read-back feedback: exactly two lines show (scrollable), not a half-cut third. */
+#transport-workspace[data-kb=open] #transport-intake-feedback{max-height:calc(2.9em + .5rem);padding-bottom:0}
+#transport-workspace[data-kb=open] .tw-inquiries:not(:has(.tw-btn-confirm)),
+#transport-workspace[data-kb=open] .transport-inquiry:not(:has(.tw-btn-confirm)){display:none}
+#transport-workspace[data-kb=open] .tw-inquiries{padding:5px 10px}
+#transport-workspace[data-kb=open] .transport-inquiry{flex:1 1 100%;max-width:none;min-height:0;padding:0 1px 0 10px}
+#transport-workspace[data-kb=open] .tw-inquiry-icon{display:none}
+#transport-workspace[data-kb=open] .tw-inquiry-copy{flex-direction:row;align-items:center;gap:6px}
+/* The green row and its 목적지 확정 already say 수용 가능; the pill gives its width to the hospital name. */
+#transport-workspace[data-kb=open] .transport-inquiry:has(.tw-btn-confirm) .tw-pill{display:none}
+
 /* ---------- Motion (respecting reduced motion) ---------- */
 @media(prefers-reduced-motion:no-preference){
   .transport-message{animation:tw-in .22s ease-out both}
@@ -412,16 +516,38 @@ html:has(#transport-review-panel[open]),body:has(#transport-review-panel[open]){
   .tw-steps li{font-size:11.5px;gap:4px}
   .tw-dock{padding-left:10px;padding-right:10px}
   #transport-workspace .tw-send{padding:0 13px 0 11px}
-  .tw-next{flex-wrap:wrap}
-  .tw-next-actions{flex-direction:row;width:100%}
-  .tw-next-actions .tw-btn{flex:1}
   .tw-facts{grid-template-columns:repeat(2,minmax(0,1fr))}
   .tw-cand-actions{grid-template-columns:1fr 1.3fr}
 }
 @media(max-width:340px){
   /* Icon-only send keeps one line for the draft; the button's text stays its accessible name. */
-  #transport-workspace .tw-send{justify-content:center;width:48px;padding:0;font-size:0}
-  #transport-workspace .tw-send::before{width:20px;height:20px}
+  #transport-workspace:not([data-pending=true]) .tw-send{justify-content:center;width:48px;padding:0;font-size:0}
+  #transport-workspace:not([data-pending=true]) .tw-send::before{width:20px;height:20px}
   #transport-workspace .tw-switch{padding:0 11px 0 10px}
+  /* The warning tab wraps to two lines and grows upward; the log keeps clear of it. */
+  #transport-workspace .tw-synthetic-line{white-space:normal;text-align:center}
+  #transport-messages{padding-bottom:36px;scroll-padding-bottom:36px}
+  /* The decision chip takes the whole row so the hospital name is not cut; the other chips wrap under it. */
+  #transport-workspace .tw-inquiries:has(.tw-btn-confirm){flex-wrap:wrap;max-height:40%;overflow-x:hidden;overflow-y:auto}
+  #transport-workspace .transport-inquiry:has(.tw-btn-confirm){flex:1 0 100%;max-width:none}
 }
 @media(max-width:330px){.tw-fields{grid-template-columns:1fr}.tw-people [data-role=crew]{display:none}}
+
+/* Use the actual workspace height, including embeddings and visual-viewport-only keyboards.
+   Long alerts and extra actions scroll independently so they cannot displace the composer. */
+@container transport (max-height:440px){
+  .tw-updates{display:block;flex:0 1 auto;min-height:0;max-height:27%;overflow-y:auto;scrollbar-width:thin}
+  #transport-workspace .tw-updates>.tw-inquiries{min-height:0;max-height:none}
+  #transport-workspace .tw-chat{min-height:0}
+  /* Keep the latest line readable beside retry controls when room remains above the composer. */
+  .tw-log{min-height:clamp(0px,calc(100% - 100px),32px)}
+  .tw-dock{display:flex;flex-direction:column;flex:0 1 auto;min-height:0;max-height:100%}
+  .tw-dock-tools{display:block;min-height:0;overflow-y:auto;scrollbar-width:thin}
+  .tw-form{flex:none}
+}
+
+.tw-intake-feedback { max-height: 6rem; overflow: auto; white-space: pre-line; padding: .5rem .8rem; font-size: .88rem; line-height: 1.45; }
+.tw-command .tw-dialog-actions { display: flex; flex-direction: column-reverse; gap: .45rem; }
+.tw-command .tw-dialog-actions button { width: 100%; }
+#transport-command-confirm { min-height: 56px; font-size: 1.1rem; font-weight: 750; }
+#transport-command-warnings { white-space: pre-line; }

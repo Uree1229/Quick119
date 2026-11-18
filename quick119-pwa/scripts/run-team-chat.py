@@ -30,6 +30,9 @@ def main():
             parser.error("Readiness file must be a new file beside the synthetic DB.")
     # Standalone team runtime uses only the stdlib: no FastAPI/solver dependency changes.
     sys.path.insert(0, str(SOURCE))
+    sys.path.insert(1, str(ROOT))
+    from intake_commands import install_routes
+    install_routes()
     from server.team_runtime import CommonRuntime, refresh_fixture_resources
     if args.refresh_synthetic_resources and db_path.exists():
         refresh_fixture_resources(db_path)

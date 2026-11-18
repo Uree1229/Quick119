@@ -204,6 +204,151 @@ class LiveTeamChat(unittest.TestCase):
         self.assertIn("connect-src 'self'", hospital.headers['content-security-policy'])
         self.assertEqual(self.http.get(self.api_url + '/hospital/chat-recovery.mjs').status_code, 200)
 
+    def test_voice_commands_share_the_chat_draft_and_require_touch(self):
+        from chrome_driver import Chrome
+        mobile = Chrome(Path('C:/Program Files/Google/Chrome/Application/chrome.exe'), self.run_dir / 'command-profile')
+        self.addCleanup(mobile.close)
+        mobile.call('Page.enable')
+        mobile.call('Emulation.setDeviceMetricsOverride', width=390, height=844, deviceScaleFactor=1, mobile=True)
+        mobile.call('Page.addScriptToEvaluateOnNewDocument', source="""
+          window.SpeechRecognition = class {
+            start(){window.mic=this; this.onstart();}
+            stop(){this.onend();}
+            abort(){}
+            emit(text,final,alternatives=[]){
+              const row=[text,...alternatives].map(transcript=>({transcript}));
+              row.isFinal=final; this.onresult({resultIndex:0,results:[row]});
+            }
+          };
+        """)
+
+        def js(code):
+            result = mobile.call('Runtime.evaluate', expression=code, awaitPromise=True, returnByValue=True)
+            self.assertNotIn('exceptionDetails', result)
+            return result['result'].get('value')
+
+        def wait(condition):
+            end = time.monotonic() + 12
+            while time.monotonic() < end:
+                if js('Boolean(' + condition + ')'):
+                    return
+                time.sleep(.08)
+            self.fail(condition)
+
+        def say(text, alternatives=()):
+            js("document.querySelector('#transport-voice-start').click()")
+            js(f"mic.emit({json.dumps(text)},true,{json.dumps(alternatives)}); mic.stop()")
+            wait("!document.querySelector('#transport-message').value && !document.querySelector('#transport-send').disabled")
+
+        mobile.call('Page.navigate', url=self.api_url + '/transport/')
+        wait("document.querySelector('#transport-voice-start') && !document.querySelector('#transport-voice-start').disabled")
+        pid = js("new URLSearchParams(location.search).get('pid')")
+        route = '/api/patients/' + pid
+        def draft():
+            return self.call('GET', route + '/intake-draft')['draft']
+
+        js("document.querySelector('#transport-voice-start').click(); mic.emit('전송해줘',false); mic.stop()")
+        self.assertIsNone(draft())
+        say('20세')
+        self.assertEqual(draft()['fields']['age'], 20)
+        say('나이 21세로 수정해줘')
+        self.assertEqual(draft()['fields']['age'], 21)
+        say('전송해줘', ['전송하지 마'])
+        self.assertFalse(js("document.querySelector('#transport-command-panel').open"))
+        say('전송해줘')
+        wait("document.querySelector('#transport-command-panel').open")
+        self.assertGreaterEqual(js("document.querySelector('#transport-command-confirm').getBoundingClientRect().height"), 48)
+        self.assertIsNone(self.call('GET', route)['age'])
+        self.assertEqual(js("document.querySelectorAll('[data-candidate-id]').length"), 0)
+        js("document.querySelector('#transport-command-confirm').click()")
+        wait("!document.querySelector('#transport-gps').hidden && document.querySelectorAll('[data-candidate-id]').length === 3")
+        self.assertEqual(self.call('GET', route)['age'], 21)
+        self.assertEqual(self.call('GET', route)['inquiries'], [])
+
+    def test_typing_mode_keeps_the_chat_visible_on_a_short_phone(self):
+        from chrome_driver import Chrome
+        mobile = Chrome(Path('C:/Program Files/Google/Chrome/Application/chrome.exe'), self.run_dir / ('typing-profile-' + uuid4().hex))
+        self.addCleanup(mobile.close)
+        mobile.call('Page.enable')
+
+        def screen(width, height):
+            # Model the layout viewport resizing in Android's interactive-widget=resizes-content mode.
+            mobile.call('Emulation.setDeviceMetricsOverride', width=width, height=height, deviceScaleFactor=1, mobile=True)
+
+        def js(code):
+            result = mobile.call('Runtime.evaluate', expression=code, awaitPromise=True, returnByValue=True)
+            self.assertNotIn('exceptionDetails', result)
+            return result['result'].get('value')
+
+        def wait(condition):
+            end = time.monotonic() + 12
+            while time.monotonic() < end:
+                if js('Boolean(' + condition + ')'):
+                    return
+                time.sleep(.08)
+            self.fail(condition)
+
+        brand_bar = "getComputedStyle(document.querySelector('.app-header')).display !== 'none'"
+        typing = "document.getElementById('transport-workspace').dataset.kb === 'open'"
+        ready = "document.getElementById('transport-case')?.textContent.includes('Q119-TEST-') && !document.getElementById('transport-message').disabled"
+        for width, full, reduced, partial, min_log in ((360, 740, 450, 620, 200), (844, 390, 220, 280, 30)):
+            with self.subTest(width=width, full=full):
+                screen(width, full)
+                mobile.call('Page.navigate', url=self.api_url + '/transport/')
+                wait(ready)
+                self.assertTrue(js(brand_bar))
+                screen(width, reduced)
+                wait(f"visualViewport.height === {reduced}")
+                self.assertFalse(js(typing))
+                screen(width, full)
+                wait(f"visualViewport.height === {full}")
+                js("document.getElementById('transport-message').focus()")
+                screen(width, reduced)
+                wait(typing)
+                self.assertFalse(js(brand_bar))
+                self.assertGreater(js("document.getElementById('transport-messages').getBoundingClientRect().height"), min_log)
+                for height in (reduced, partial):
+                    screen(width, height)
+                    # Partial dismissal stays in typing mode, but the shell must follow the new visible height.
+                    wait(f"Math.abs(document.querySelector('.app-shell--workspace').getBoundingClientRect().height - {height}) < 2")
+                    self.assertTrue(js(typing))
+                    for selector in ('#transport-send', '#transport-message', '.tw-synthetic-line'):
+                        top, bottom = js(f"((r) => [r.top, r.bottom])(document.querySelector('{selector}').getBoundingClientRect())")
+                        self.assertGreaterEqual(top, -1, selector)
+                        self.assertLessEqual(bottom, height + 1, selector)
+                screen(width, full)
+                wait("!(" + typing + ")")
+                self.assertTrue(js(brand_bar))
+
+        # Two acceptance actions and a failed poll compete for space above the active landscape composer.
+        pid = js("new URLSearchParams(location.search).get('pid')")
+        replies = self.call('POST', f'/api/patients/{pid}/inquiries', {'hospital_ids': ['H01', 'H02']})
+        for inquiry in replies['inquiries']:
+            self.call('POST', f"/api/inquiries/{inquiry['id']}/respond", {'action': 'accept', 'handled_by': '가상 검토자'})
+        wait("document.querySelectorAll('[data-transport-confirm]').length === 2")
+        js("document.getElementById('transport-message').focus()")
+        screen(844, 220)
+        wait(typing)
+        js("""const normalFetch = window.fetch;
+            window.fetch = (url, options) => String(url).includes('/conversation?')
+              ? Promise.resolve(Response.json({detail:'가상 조회 오류'}, {status:503})) : normalFetch(url, options);
+        """)
+        wait("!document.getElementById('transport-error').hidden && document.getElementById('transport-workspace').dataset.connection === 'pending'")
+        self.assertGreater(js("document.getElementById('transport-messages').clientHeight"), 0)
+        for selector in ('#transport-message', '#transport-send'):
+            top, bottom = js(f"((r) => [r.top, r.bottom])(document.querySelector('{selector}').getBoundingClientRect())")
+            self.assertGreaterEqual(top, -1, selector)
+            self.assertLessEqual(bottom, 221, selector)
+        self.assertTrue(js("""(() => {
+            const tray = document.querySelector('.tw-updates');
+            tray.scrollTop = tray.scrollHeight;
+            const clip = tray.getBoundingClientRect();
+            return [...tray.querySelectorAll('[data-transport-confirm]')].some(button => {
+              const r = button.getBoundingClientRect();
+              return r.height > 0 && r.top >= clip.top - 1 && r.bottom <= clip.bottom + 1;
+            });
+        })()"""))
+
     def test_real_browser_staff_acceptance_and_chat(self):
         import base64
         from chrome_driver import Chrome

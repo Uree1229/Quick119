@@ -23,17 +23,19 @@
     if (key === 'breathing') return {정상: 'normal', 비정상: 'abnormal', 불규칙: 'abnormal', 곤란: 'abnormal', 없음: 'absent'}[value] ?? null;
     return value;
   }
-  window.Quick119PatientReview = Object.freeze({bind({getState, onSearch}) {
+  window.Quick119PatientReview = Object.freeze({bind({getState, onSearch, openDraft}) {
     const $ = name => document.getElementById('transport-' + name);
     if (!$('review-panel')) return null;
-    const dialog = $('review-panel');
+    const dialog = $('review-panel'), searchStatus = $('search-status');
     let reviewed = null, editing = false, busy = false, returnFocus = null;
     const fields = new Map();
     function update() {
       const state = getState();
       $('patient-info').disabled = !state.patient || busy;
       $('start-search').disabled = !state.patient || !!state.blockedReason || busy;
-      $('search-status').textContent = state.searchStatus || state.blockedReason || '환자 정보를 최종 확인하면 후보 병원을 찾습니다.';
+      const message = state.searchStatus || state.blockedReason || '환자 정보를 최종 확인하면 후보 병원을 찾습니다.';
+      searchStatus.dataset.kind = state.searchStatus ? 'stale' : state.blockedReason ? state.blockedKind || 'blocked' : 'hint';
+      if (searchStatus.textContent !== message) searchStatus.textContent = message;
       if (reviewed) {
         const changed = state.token !== reviewed.token;
         $('review-submit').disabled = busy || !editing || !!state.blockedReason || changed;
@@ -138,8 +140,11 @@
       else delete result.extra.vitals;
       return result;
     }
-    $('patient-info').addEventListener('click', () => show(false));
-    $('start-search').addEventListener('click', () => show(true));
+    function open(edit) {
+      if (!openDraft?.(edit, () => show(edit))) show(edit);
+    }
+    $('patient-info').addEventListener('click', () => open(false));
+    $('start-search').addEventListener('click', () => open(true));
     function closeReview(force = false) {
       if (busy && !force) return;
       reviewed = null;

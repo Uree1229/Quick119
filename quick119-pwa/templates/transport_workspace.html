@@ -1,5 +1,5 @@
 <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-<link rel="stylesheet" href="/static/transport-workspace.css?v=6">
+<link rel="stylesheet" href="/static/transport-workspace.css?v=9">
 <section id="transport-workspace" class="tw" aria-label="접수 채팅과 이송 지원" data-view="chat" data-stage="report" data-connection="pending" data-voice="idle">
   <header class="tw-head">
     <div class="tw-head-row">
@@ -19,9 +19,11 @@
       <li data-state="todo"><span class="tw-step-dot" aria-hidden="true">4</span><span class="tw-step-label">확정<span class="tw-sr"> · 목적지 확정, 병원 참여</span></span></li>
     </ol>
   </header>
-  <p id="transport-connection" class="tw-banner tw-connection" role="status" aria-live="polite">접수 채팅을 준비하고 있습니다.</p>
-  <p id="transport-error" class="tw-banner tw-error" role="alert" hidden></p>
-  <div id="transport-inquiries" class="tw-inquiries" aria-label="수용 문의 및 목적지 확정" aria-live="polite"></div>
+  <div class="tw-updates">
+    <p id="transport-connection" class="tw-banner tw-connection" role="status" aria-live="polite">접수 채팅을 준비하고 있습니다.</p>
+    <p id="transport-error" class="tw-banner tw-error" role="alert" hidden></p>
+    <div id="transport-inquiries" class="tw-inquiries" aria-label="수용 문의 및 목적지 확정" aria-live="polite"></div>
+  </div>
 
   <section id="transport-chat" class="tw-chat" aria-labelledby="transport-chat-title">
     <h2 id="transport-chat-title" class="tw-sr" tabindex="-1">접수 채팅</h2>
@@ -31,6 +33,7 @@
           <p id="transport-case" class="tw-room-case"></p>
           <details class="tw-room-more">
             <summary>대화 안내 · 연결 관리</summary>
+            <p class="tw-room-note" id="transport-voice-privacy">브라우저 음성인식은 제공자의 서버에서 처리될 수 있습니다. 가상 환자 정보만 입력해 주세요.</p>
             <p id="transport-sharing" class="tw-room-note">목적지를 확정하면 해당 병원이 참여하며, 기존 보고도 함께 공유됩니다.</p>
             <p class="tw-room-note">전송 실패 시 같은 요청으로 재시도합니다. 초안과 재시도 요청은 현재 페이지 메모리에만 보관합니다.</p>
             <button type="button" id="transport-chat-stop" class="tw-text-btn" disabled>채팅 연결 종료</button>
@@ -41,34 +44,39 @@
       <button type="button" id="transport-mark-read" class="tw-jump" hidden>새 메시지 확인</button>
     </div>
     <div class="tw-dock">
-      <button type="button" id="transport-new-case" class="tw-notice" disabled>접수 연결 다시 시도</button>
-      <button type="button" id="transport-chat-resume" class="tw-notice" hidden>채팅 다시 연결</button>
-      <div class="tw-pending">
-        <p id="transport-pending"></p>
-        <div class="tw-pending-actions"><button type="button" id="transport-review-draft" class="tw-btn tw-btn-primary" hidden>현재 참여자에게 보낼 내용 확인</button><button type="button" id="transport-discard" class="tw-btn tw-btn-ghost" hidden>재시도 요청 지우기</button></div>
-      </div>
-      <div class="tw-next">
-        <div class="tw-next-copy"><strong id="transport-next-title">보고 완료 · 병원 탐색</strong><p id="transport-search-status" role="status">환자 정보를 최종 확인하면 후보 병원을 찾습니다.</p></div>
-        <div class="tw-next-actions"><button type="button" id="transport-open-map" class="tw-btn tw-btn-cta">후보 보기</button><button type="button" id="transport-start-search" class="tw-btn tw-btn-cta" disabled>병원 탐색 시작</button></div>
+      <p class="transport-synthetic tw-synthetic-line"><span class="tw-i tw-i--shield" aria-hidden="true"></span>가상 환자·병원 전용 · 실제 환자정보 입력 금지</p>
+      <div class="tw-dock-tools">
+        <button type="button" id="transport-new-case" class="tw-notice" disabled>접수 연결 다시 시도</button>
+        <button type="button" id="transport-chat-resume" class="tw-notice" hidden>채팅 다시 연결</button>
+        <div class="tw-pending">
+          <p id="transport-pending"></p>
+          <div class="tw-pending-actions"><button type="button" id="transport-review-draft" class="tw-btn tw-btn-primary" hidden>현재 참여자에게 보낼 내용 확인</button><button type="button" id="transport-discard" class="tw-btn tw-btn-ghost" hidden>재시도 요청 지우기</button></div>
+        </div>
+        <div class="tw-next">
+          <div class="tw-next-copy"><strong id="transport-next-title">보고 완료 · 병원 탐색</strong></div>
+          <p id="transport-search-status" role="status" aria-atomic="true">환자 정보를 최종 확인하면 후보 병원을 찾습니다.</p>
+          <div class="tw-next-actions"><button type="button" id="transport-open-map" class="tw-btn tw-btn-cta">후보 보기</button><button type="button" id="transport-start-search" aria-describedby="transport-search-status" class="tw-btn tw-btn-cta" disabled>병원 탐색 시작</button></div>
+        </div>
+        <div id="transport-intake-feedback" class="tw-intake-feedback" role="status" hidden></div>
+        <div id="transport-hospital-contact" class="tw-intake-feedback" role="status" hidden></div>
+        <button type="button" id="transport-answer" class="tw-text-btn" hidden></button>
       </div>
       <form id="transport-message-form" class="tw-form">
-        <div class="tw-voice">
+        <div class="tw-voice" id="transport-voice-panel" hidden>
           <span class="tw-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
           <div class="tw-voice-copy">
-            <p id="transport-voice-status" role="status">음성은 초안에만 들어갑니다. 내용을 확인한 뒤 직접 보내 주세요.</p>
+            <p id="transport-voice-status" role="status"></p>
             <p id="transport-voice-interim" class="transport-voice-interim" hidden aria-live="polite"></p>
-            <p class="tw-voice-note">브라우저 음성인식은 제공자의 서버에서 처리될 수 있습니다.</p>
           </div>
         </div>
         <div class="tw-composer">
-          <button type="button" id="transport-voice-start" class="tw-mic" disabled title="음성으로 보고"><span class="tw-sr">음성으로 보고</span></button>
+          <button type="button" id="transport-voice-start" aria-describedby="transport-voice-privacy" class="tw-mic" disabled title="음성으로 보고"><span class="tw-sr">음성으로 보고</span></button>
           <button type="button" id="transport-voice-stop" class="tw-mic-stop" hidden><span class="tw-sr">음성 입력 </span>마치기</button>
           <label id="transport-message-label" class="tw-sr" for="transport-message">시스템에 보낼 환자 상태</label>
           <textarea id="transport-message" maxlength="2000" rows="1" disabled placeholder="환자 상태 입력"></textarea>
           <button type="submit" id="transport-send" class="tw-send" disabled>보내기</button>
         </div>
       </form>
-      <p class="transport-synthetic tw-synthetic-line"><span class="tw-i tw-i--shield" aria-hidden="true"></span>가상 병원·가상 이송 전용 · 실제 환자정보를 입력하지 마세요.</p>
       <p id="transport-chat-status" class="tw-sr">시스템과 구급대원이 대화를 시작합니다.</p>
     </div>
   </section>
@@ -132,6 +140,18 @@
     </div>
   </div>
 
+  <dialog id="transport-command-panel" class="transport-review tw-command" aria-labelledby="transport-command-title">
+    <header class="transport-review-header"><h3 id="transport-command-title">환자정보 확인</h3></header>
+    <div class="transport-review-body">
+      <p id="transport-command-summary"></p>
+      <dl id="transport-command-fields" class="transport-review-grid tw-facts"></dl>
+      <p id="transport-command-warnings" role="status"></p>
+    </div>
+    <footer class="tw-dialog-actions">
+      <button type="button" id="transport-command-close" class="tw-btn tw-btn-ghost">채팅으로</button>
+      <button type="button" id="transport-command-confirm" class="tw-btn tw-btn-cta">확인하고 병원 탐색</button>
+    </footer>
+  </dialog>
   <dialog id="transport-review-panel" class="transport-review" aria-labelledby="transport-review-title" data-mode="view">
     <header class="transport-review-header">
       <span class="tw-review-icon" aria-hidden="true"><span class="tw-i tw-i--patient"></span></span>
@@ -159,8 +179,9 @@
 </section>
 <script defer src="/static/vendor/leaflet/leaflet.js"></script>
 <script defer src="/static/car-routes.js?v=6"></script>
-<script defer src="/static/transport-workspace.js?v=5"></script>
-<script defer src="/static/chat-voice.js?v=3"></script>
+<script defer src="/static/transport-workspace.js?v=7"></script>
+<script defer src="/static/chat-voice.js?v=7"></script>
 <script defer src="/static/voice-intake.js"></script>
-<script defer src="/static/patient-review.js?v=5"></script>
-<script defer src="/static/hospital-chat.js?v=6"></script>
+<script defer src="/static/patient-review.js?v=8"></script>
+<script defer src="/static/intake-commands.js?v=2"></script>
+<script defer src="/static/hospital-chat.js?v=10"></script>

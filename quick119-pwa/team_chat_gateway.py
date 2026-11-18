@@ -112,7 +112,7 @@ async def forward(request: Request):
                     hid = request.path_params.get('hid')
                     if pid and request.method == 'GET' and request.url.path.endswith('/conversation'):
                         if hid is None:
-                            result = crew_conversation(result)
+                            result = dict(crew_conversation(result), intake_commands=True)
                         elif (result.get('active_hospital_session') or {}).get('hospital_id') == hid:
                             # The hospital GET above is the authorization gate.
                             # Read global streams only for the current confirmed
@@ -145,6 +145,9 @@ for method, path in (
     ("POST", "/api/patients"),
     ("GET", "/api/patients/{pid}"),
     ("PATCH", "/api/patients/{pid}"),
+    ("GET", "/api/patients/{pid}/intake-draft"),
+    ("POST", "/api/patients/{pid}/intake-draft"),
+    ("POST", "/api/patients/{pid}/intake-draft/confirm"),
     ("GET", "/api/patients/{pid}/candidates"),
     ("GET", "/api/patients/{pid}/input-review"),
     ("GET", "/api/patients/{pid}/transport-review"),
