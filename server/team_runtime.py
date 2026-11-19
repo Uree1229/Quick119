@@ -130,6 +130,12 @@ def _prepare_database(path, now=None):
     path, now = _path(path), int(time.time()) if now is None else now
     existing = inspect_database(path, now)
     if existing['exists']:
+        conn = db.connect(str(path))
+        try:
+            db.init(conn)
+        finally:
+            conn.close()
+        existing = inspect_database(path, now)
         return dict(existing, reused=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.touch(exist_ok=False)

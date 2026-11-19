@@ -260,7 +260,7 @@ class LiveTeamChat(unittest.TestCase):
         self.assertEqual(self.http.get(self.api_url + "/manifest.webmanifest").json()["start_url"], "/transport/")
         patient_page = self.http.get(self.api_url + "/patients")
         self.assertIn("transport-patient-cases", patient_page.text)
-        self.assertIn("/static/transport-patients.js?v=2", patient_page.text)
+        self.assertIn("/static/transport-patients.js?v=3", patient_page.text)
         for path in ('/emergency', '/voice-intake'):
             response = self.http.get(self.api_url + path)
             self.assertEqual(response.status_code, 303)
@@ -342,6 +342,130 @@ class LiveTeamChat(unittest.TestCase):
         updated = {item["id"]: item for item in self.call("GET", "/api/transport/patients")["patients"]}
         self.assertEqual(updated[first]["case_number"], first_number)
         self.assertEqual(updated[third]["case_number"], second_number + 1)
+
+    def test_mobile_header_keeps_title_and_all_participant_labels_visible(self):
+        import base64
+        from chrome_driver import Chrome
+
+        pid = self.create_case()
+        inquiry = self.call("POST", f"/api/patients/{pid}/inquiries", {"hospital_ids": ["H01"]})["inquiries"][0]
+        self.call("POST", f"/api/inquiries/{inquiry['id']}/respond",
+                  {"action": "accept", "handled_by": "가상 의료진"})
+        self.call("POST", f"/api/patients/{pid}/confirm", {"inquiry_id": inquiry["id"]})
+        mobile = Chrome(Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
+                        self.run_dir / ("header-profile-" + uuid4().hex))
+        self.addCleanup(mobile.close)
+        mobile.call("Page.enable")
+        mobile.call("Emulation.setDeviceMetricsOverride", width=360, height=844,
+                    deviceScaleFactor=1, mobile=True)
+        mobile.call("Page.navigate", url=f"{self.api_url}/transport/?pid={pid}")
+
+        def evaluate(source):
+            result = mobile.call("Runtime.evaluate", expression=source, awaitPromise=True, returnByValue=True)
+            self.assertNotIn("exceptionDetails", result, str(result))
+            return result.get("result", {}).get("value")
+
+        def wait(condition):
+            deadline = time.monotonic() + 16
+            while time.monotonic() < deadline:
+                try:
+                    if evaluate("Boolean(" + condition + ")"):
+                        return
+                except RuntimeError as failure:
+                    if "context" not in str(failure).lower():
+                        raise
+                time.sleep(.08)
+            self.fail("Timed out: " + condition)
+
+        wait("document.querySelector('#transport-workspace[data-connection=live]')")
+
+        def assert_header_fits(width):
+            metrics = json.loads(evaluate("""JSON.stringify((() => {
+              const workspace=document.getElementById('transport-workspace');
+              const head=workspace.querySelector('.tw-head');
+              const title=workspace.querySelector('.tw-title');
+              const people=workspace.querySelector('.tw-people');
+              const visible=element => getComputedStyle(element).display !== 'none';
+              const participants=[...people.children].map(item => ({
+                role:item.dataset.role,text:item.textContent.trim(),visible:visible(item),
+                fits:item.scrollWidth<=item.clientWidth,
+                left:item.getBoundingClientRect().left,right:item.getBoundingClientRect().right
+              }));
+              const actions=[...workspace.querySelector('.tw-head-actions').children]
+                .filter(visible).map(item=>({left:item.getBoundingClientRect().left,
+                  right:item.getBoundingClientRect().right}));
+              return {title:title.textContent.trim(),titleFits:title.scrollWidth<=title.clientWidth,
+                view:workspace.dataset.view,width:innerWidth,headBottom:head.getBoundingClientRect().bottom,
+                participants,actions};
+            })())"""))
+            self.assertEqual(metrics["width"], width, metrics)
+            self.assertTrue(metrics["title"], metrics)
+            self.assertTrue(metrics["titleFits"], metrics)
+            self.assertLessEqual(metrics["headBottom"], 844, metrics)
+            self.assertTrue({"system", "crew", "hospital"}.issubset(
+                {item["role"] for item in metrics["participants"]}), metrics)
+            for item in metrics["participants"]:
+                self.assertTrue(item["visible"], metrics)
+                self.assertTrue(item["fits"], metrics)
+                self.assertGreaterEqual(item["left"], 0, metrics)
+                self.assertLessEqual(item["right"], width, metrics)
+            for item in metrics["actions"]:
+                self.assertGreaterEqual(item["left"], 0, metrics)
+                self.assertLessEqual(item["right"], width, metrics)
+            return metrics
+
+        for width in (360, 409, 412):
+            with self.subTest(width=width, view="chat"):
+                mobile.call("Emulation.setDeviceMetricsOverride", width=width, height=844,
+                            deviceScaleFactor=1, mobile=True)
+                wait(f"innerWidth === {width}")
+                assert_header_fits(width)
+                if width in (360, 412):
+                    image = mobile.call("Page.captureScreenshot", format="png")
+                    (self.run_dir / f"mobile-header-chat-{width}.png").write_bytes(
+                        base64.b64decode(image["data"]))
+            with self.subTest(width=width, view="map"):
+                evaluate("document.getElementById('transport-toggle').click()")
+                wait("document.getElementById('transport-workspace').dataset.view === 'gps'")
+                assert_header_fits(width)
+                if width in (360, 412):
+                    image = mobile.call("Page.captureScreenshot", format="png")
+                    (self.run_dir / f"mobile-header-map-{width}.png").write_bytes(
+                        base64.b64decode(image["data"]))
+                evaluate("document.getElementById('transport-toggle').click()")
+                wait("document.getElementById('transport-workspace').dataset.view === 'chat'")
+
+    def test_patient_list_explains_legacy_server_metadata_mismatch(self):
+        from chrome_driver import Chrome
+
+        mobile = Chrome(Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
+                        self.run_dir / ("legacy-list-profile-" + uuid4().hex))
+        self.addCleanup(mobile.close)
+        mobile.call("Page.enable")
+        mobile.call("Emulation.setDeviceMetricsOverride", width=390, height=844,
+                    deviceScaleFactor=1, mobile=True)
+        mobile.call("Page.addScriptToEvaluateOnNewDocument", source="""
+          const nativeFetch=window.fetch.bind(window);
+          window.fetch=(input,init)=>new URL(input,location.href).pathname==='/api/transport/patients'
+            ?Promise.resolve(Response.json({patients:[{id:'Q119-TEST-LEGACY'}]}))
+            :nativeFetch(input,init);
+        """)
+        mobile.call("Page.navigate", url=self.api_url + "/patients")
+
+        def evaluate(source):
+            result = mobile.call("Runtime.evaluate", expression=source, awaitPromise=True, returnByValue=True)
+            self.assertNotIn("exceptionDetails", result, str(result))
+            return result.get("result", {}).get("value")
+
+        deadline = time.monotonic() + 12
+        expected = "최신 공통 서버를 재시작한 뒤 다시 시도하세요"
+        while time.monotonic() < deadline:
+            if expected in (evaluate("document.getElementById('transport-patients-status').textContent") or ""):
+                break
+            time.sleep(.08)
+        else:
+            self.fail("Legacy list response did not produce the version-mismatch guidance.")
+        self.assertIsNone(evaluate("document.querySelector('.transport-patient-case')"))
 
     def test_voice_commands_share_the_chat_draft_and_require_touch(self):
         from chrome_driver import Chrome
