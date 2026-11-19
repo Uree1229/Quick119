@@ -4,12 +4,11 @@
 
 /* ---------- Full-height app screen inside the existing shell ---------- */
 .app-shell--workspace{display:flex;flex-direction:column;height:100vh;height:100dvh;min-height:0;padding-bottom:0}
-.app-shell--workspace>.environment-note,.app-shell--workspace>.app-header{flex:none}
+.app-shell--workspace>.app-header{flex:none}
 .transport-page{flex:1;min-height:0;display:flex;flex-direction:column}
 @media(min-width:600px){.app-shell--workspace{height:calc(100dvh - 48px)}}
 @media (min-width:600px) and (max-height:560px){
   .app-shell--workspace{height:100dvh;margin-block:0;border-radius:0}
-  .app-shell--workspace>.environment-note{padding-block:2px}
   .app-shell--workspace>.app-header{min-height:44px;padding-block:max(2px,env(safe-area-inset-top)) 2px}
 }
 
@@ -32,7 +31,6 @@
   --i-locate:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='6.5'/%3E%3Ccircle cx='12' cy='12' r='1.6' fill='%23000'/%3E%3Cpath d='M12 2v3M12 19v3M2 12h3M19 12h3'/%3E%3C/svg%3E");
   --i-refresh:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 12a8 8 0 1 1-2.6-5.9'/%3E%3Cpath d='M20 4v5h-5'/%3E%3C/svg%3E");
   --i-pin:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 21s-6.5-6.2-6.5-11.2a6.5 6.5 0 0 1 13 0C18.5 14.8 12 21 12 21z'/%3E%3Ccircle cx='12' cy='9.8' r='2.4'/%3E%3C/svg%3E");
-  --i-shield:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3 19 5.8v5.7c0 4.4-3 7.8-7 9.5-4-1.7-7-5.1-7-9.5V5.8z'/%3E%3Cpath d='M12 8.5v4M12 15.5h.01'/%3E%3C/svg%3E");
   --i-alert:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3.5 2.5 20h19z'/%3E%3Cpath d='M12 10v4.5M12 17.2h.01'/%3E%3C/svg%3E");
   --i-play:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M8 5.5v13l10.5-6.5z'/%3E%3C/svg%3E");
   --i-down:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 5v14M6 13l6 6 6-6'/%3E%3C/svg%3E");
@@ -55,7 +53,7 @@
 #transport-workspace .tw-sr{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
 #transport-workspace .tw-i{display:inline-block;flex:none;width:20px;height:20px;background:currentColor;-webkit-mask:var(--i) center/contain no-repeat;mask:var(--i) center/contain no-repeat}
 .tw-i--patient{--i:var(--i-patient)}.tw-i--close{--i:var(--i-close)}.tw-i--route{--i:var(--i-route)}.tw-i--pin{--i:var(--i-pin)}
-.tw-i--shield{--i:var(--i-shield)}.tw-i--hospital{--i:var(--i-hospital)}.tw-i--alert{--i:var(--i-alert)}
+.tw-i--hospital{--i:var(--i-hospital)}.tw-i--alert{--i:var(--i-alert)}
 
 /* ---------- Buttons ---------- */
 #transport-workspace .tw-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:0 14px;border-radius:12px;border:1px solid transparent;font-size:14px;font-weight:800;line-height:1.25;letter-spacing:-.3px;text-align:center;text-decoration:none;white-space:normal;transition:background .15s,box-shadow .15s,opacity .15s}
@@ -82,7 +80,7 @@
 .tw-title::after{content:"";display:inline-block;width:8px;height:8px;margin-left:7px;vertical-align:3px;border-radius:50%;background:#e2a33a;box-shadow:0 0 0 3px #e2a33a2e}
 [data-connection=live] .tw-title::after{background:#22a06b;box-shadow:0 0 0 3px #22a06b2e}
 [data-connection=error] .tw-title::after{background:var(--tw-red);box-shadow:0 0 0 3px #e5484d2e}
-:is([data-connection=stopped],[data-connection=paused],[data-connection=closed]) .tw-title::after{background:#94a3b8;box-shadow:none}
+:is([data-connection=paused],[data-connection=closed]) .tw-title::after{background:#94a3b8;box-shadow:none}
 .tw-people{list-style:none;display:flex;gap:5px;min-width:0;margin-top:4px!important;padding:0;overflow:hidden}
 .tw-people li{flex:none;display:block;max-width:100%;height:22px;padding:0 8px 0 7px;border-radius:11px;border:1px solid var(--tw-line);background:var(--tw-soft);color:#4a5d75;font-size:11.5px;font-weight:800;line-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tw-people li::before{content:"";display:inline-block;width:6px;height:6px;margin-right:5px;vertical-align:1px;border-radius:50%;background:#94a3b8}
@@ -124,7 +122,7 @@
 #transport-workspace .tw-banner{flex:none;position:relative;z-index:5;display:flex;align-items:flex-start;gap:8px;padding:9px 16px;font-size:13px;font-weight:700;line-height:1.5;overflow-wrap:anywhere}
 #transport-workspace .tw-banner::before{content:"";flex:none;width:17px;height:17px;margin-top:1px;background:currentColor;-webkit-mask:var(--i-alert) center/contain no-repeat;mask:var(--i-alert) center/contain no-repeat}
 .tw-connection{background:var(--tw-amber-soft);color:var(--tw-amber);border-bottom:1px solid #f0dcb4}
-:is([data-connection=stopped],[data-connection=paused],[data-connection=closed]) .tw-connection{background:#eef2f7;color:#4b5f77;border-color:var(--tw-line)}
+:is([data-connection=paused],[data-connection=closed]) .tw-connection{background:#eef2f7;color:#4b5f77;border-color:var(--tw-line)}
 [data-connection=error] .tw-connection{background:var(--tw-red-soft);color:#a3262b;border-color:#f5c7c9}
 /* Live state is announced to screen readers but needs no banner: the header dot and participants show it. */
 #transport-workspace[data-connection=live] .tw-connection{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
@@ -162,17 +160,6 @@
 .tw-log{position:relative;flex:1;min-height:0}
 #transport-messages{position:absolute;inset:0;display:flex;flex-direction:column;padding:8px 12px 20px;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scroll-padding-bottom:20px}
 #transport-messages:focus-visible{outline-offset:-3px}
-.tw-room{align-self:center;width:100%;max-width:360px;margin:2px 0 6px;padding:10px 12px 2px;border:1px dashed #c6d2e1;border-radius:16px;background:#ffffffa6;color:var(--tw-muted);font-size:11.5px;line-height:1.55;text-align:center}
-.tw-room-more summary{display:inline-flex;align-items:center;gap:4px;min-height:36px;color:#4b5f77;font-weight:800;cursor:pointer}
-.tw-room-more summary::after{content:"";width:12px;height:12px;background:currentColor;-webkit-mask:var(--i-down) center/contain no-repeat;mask:var(--i-down) center/contain no-repeat;transition:transform .15s}
-.tw-room-more[open] summary::after{transform:rotate(180deg)}
-.tw-room-more summary::-webkit-details-marker{display:none}
-#transport-workspace .transport-synthetic{display:flex;align-items:center;justify-content:center;gap:6px;color:#a3262b;font-weight:800}
-.transport-synthetic .tw-i{width:16px;height:16px}
-.tw-room-case{margin-top:4px!important;color:#40576f;font-weight:700;font-size:11.5px;overflow-wrap:anywhere}
-.tw-room-case:empty{display:none}
-.tw-room-note{margin-top:4px!important}
-.tw-intro{align-self:center;max-width:320px;margin:26px auto!important;padding:16px 18px;border-radius:16px;background:#fff;color:#4b5f77;font-size:13.5px;line-height:1.7;text-align:center;box-shadow:0 2px 8px #17375e0f}
 /* Received messages: avatar, sender, then the bubble with its time beside it (the time wraps under only when it cannot fit).
    The bubble cap uses the viewport, not %, so a short message is never squeezed by its own shrink-to-fit width. */
 .transport-message{position:relative;align-self:flex-start;max-width:100%;min-width:0;margin-top:10px;padding-left:36px}
@@ -244,12 +231,6 @@
 .tw-composer{order:1;display:flex;align-items:flex-end;gap:8px}
 .tw-voice{order:2;display:flex;align-items:center;gap:10px;margin:6px 6px 0}
 #transport-voice-status{color:var(--tw-muted);font-size:11.5px;line-height:1.45;overflow-wrap:anywhere}
-/* Always-visible disclosures (provider speech processing, synthetic-only data) next to where the crew types or speaks. */
-#transport-workspace .tw-voice-note{margin-top:1px;color:#7d8a9b;font-size:11px;line-height:1.45;overflow-wrap:anywhere}
-#transport-workspace:is([data-voice=listening],[data-voice=finishing]) .tw-voice-note{color:#8a4a4e}
-/* Synthetic-data warning: a small tab on the dock's top edge, visible in every stage and while typing (grows upward if it wraps). */
-#transport-workspace .tw-synthetic-line{position:absolute;bottom:calc(100% - 8px);left:10px;right:10px;z-index:4;display:block;width:fit-content;max-width:calc(100% - 20px);margin:0 auto;padding:1px 9px;border:1px solid #f5c7c9;border-radius:10px;background:#fff;font-size:11px;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 4px #17375e14}
-#transport-workspace .tw-synthetic-line .tw-i{width:12px;height:12px;margin-right:4px;vertical-align:-2px}
 .transport-voice-interim{margin-top:3px!important;color:#6b4547;font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 .tw-voice-copy{flex:1;min-width:0}
 .tw-wave{display:none;align-items:center;gap:3px;flex:none;height:30px}
@@ -283,7 +264,8 @@
 
 /* ---------- Map view ---------- */
 .tw-gps{flex:1;min-height:0;display:flex;flex-direction:column;background:#fff}
-.tw-map{position:relative;z-index:0;isolation:isolate;flex:0 0 clamp(200px,44%,420px);overflow:hidden;background:#e3eaf2}
+.tw-map{position:relative;z-index:0;isolation:isolate;flex:0 0 min(50%,clamp(200px,44%,420px));overflow:hidden;background:#e3eaf2}
+.tw-gps:has(.tw-sheet[hidden]) .tw-map{flex:1}
 #car-route-map{position:absolute;inset:0;z-index:0;background:#e3eaf2}
 #car-route-map .leaflet-control-zoom a{color:var(--tw-navy)!important;text-decoration:none!important}
 #car-route-map .leaflet-pane svg{max-width:none!important}
@@ -310,8 +292,11 @@
 #transport-workspace .tw-pin{background:none;border:0}
 .tw-pin-label{position:absolute;left:2px;top:0;display:grid;place-items:center;width:30px;height:30px;border:2px solid #fff;border-radius:50% 50% 50% 0;background:var(--tw-red);box-shadow:0 4px 10px #0f233d4d;transform:rotate(-45deg)}
 .tw-pin-label b{color:#fff;font-size:13px;font-weight:900;transform:rotate(45deg)}
-.tw-sheet{position:relative;z-index:1;flex:1;min-height:0;margin-top:-18px;padding:6px 14px calc(18px + env(safe-area-inset-bottom));border-radius:22px 22px 0 0;background:#fff;box-shadow:0 -8px 22px #0f233d1c;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
-.tw-sheet::before{content:"";display:block;width:40px;height:4px;margin:2px auto 10px;border-radius:2px;background:#d3dbe5}
+#transport-workspace .tw-sheet-handle{position:relative;z-index:1;flex:none;display:flex;align-items:center;justify-content:center;gap:8px;color:var(--tw-navy);font-size:12px;font-weight:700;min-height:44px;margin-top:-18px;padding:0;border:0;border-radius:22px 22px 0 0;background:#fff;box-shadow:0 -8px 22px #0f233d1c;touch-action:none;user-select:none}
+.tw-sheet-handle::before{content:"";width:40px;height:4px;border-radius:2px;background:var(--tw-muted)}
+#transport-workspace .tw-sheet-handle[aria-expanded=false]{padding-bottom:env(safe-area-inset-bottom);min-height:calc(44px + env(safe-area-inset-bottom))}
+#transport-workspace .tw-sheet-handle:focus-visible{outline-offset:-4px}
+.tw-sheet{position:relative;flex:1;min-height:0;padding:0 14px calc(18px + env(safe-area-inset-bottom));background:#fff;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .tw-dest{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:10px 10px 10px 12px;border:1px solid #bcd0e8;border-radius:18px;background:linear-gradient(135deg,#f4f8fd,var(--tw-navy-soft))}
 .tw-sheet:has(#car-route-panel:not([data-route=none])) .tw-dest{display:none}
 .tw-dest-copy{flex:1;min-width:0;display:flex;flex-direction:column}
@@ -330,7 +315,7 @@
 .tw-live{display:none;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:12px;background:var(--tw-red);color:#fff;font-size:11.5px;font-weight:900}
 .tw-live::before{content:"";width:7px;height:7px;border-radius:50%;background:#fff}
 .tw-route[data-route=tracking] .tw-live{display:inline-flex}
-.tw-route-status{margin-top:4px!important;color:#4b5f77;font-size:13px;line-height:1.55;overflow-wrap:anywhere}
+.tw-route-status:not(:empty){margin-top:4px!important;color:#4b5f77;font-size:13px;line-height:1.55;overflow-wrap:anywhere}
 .tw-warn{display:flex;gap:7px;margin-top:10px!important;padding:9px 12px;border-radius:12px;background:var(--tw-amber-soft);color:var(--tw-amber);font-size:12.5px;font-weight:800;line-height:1.5}
 .tw-warn::before{content:"";flex:none;width:16px;height:16px;margin-top:2px;background:currentColor;-webkit-mask:var(--i-alert) center/contain no-repeat;mask:var(--i-alert) center/contain no-repeat}
 .tw-route-dest{margin-top:10px!important;color:var(--tw-ink);font-size:15px;font-weight:900;overflow-wrap:anywhere}
@@ -442,7 +427,7 @@ html:has(#transport-review-panel[open]),body:has(#transport-review-panel[open]){
    with 목적지 확정. Everything returns as soon as the keyboard closes. */
 html:has(#transport-workspace[data-kb=open]){scroll-behavior:auto}
 body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
-.app-shell--workspace:has(#transport-workspace[data-kb=open])>:is(.app-header,.environment-note){display:none}
+.app-shell--workspace:has(#transport-workspace[data-kb=open])>.app-header{display:none}
 /* Standalone and embedded chat use the visible viewport even when the keyboard only shrinks visualViewport. */
 .app-shell--workspace:has(#transport-workspace[data-kb=open]){height:var(--tw-vvh,100dvh);min-height:0;margin-block:0}
 #transport-workspace[data-kb=open]{height:var(--tw-vvh,100dvh);min-height:0}
@@ -468,7 +453,7 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
 }
 #transport-workspace:is([data-kb=open],[data-voice=listening],[data-voice=finishing]) .tw-next :is(.tw-next-copy,.tw-next-actions){display:none}
 #transport-workspace[data-kb=open] .tw-dock{padding:10px 10px 6px}
-#transport-workspace[data-kb=open] :is(.tw-dock>:not(.tw-synthetic-line,.tw-dock-tools),.tw-dock-tools>*){margin-bottom:6px}
+#transport-workspace[data-kb=open] :is(.tw-dock>:not(.tw-dock-tools),.tw-dock-tools>*){margin-bottom:6px}
 #transport-workspace[data-kb=open] .tw-dock>:is(:last-child,.tw-form){margin-bottom:0}
 #transport-workspace[data-kb=open] .tw-mic:disabled,
 #transport-workspace[data-kb=open][data-voice=unavailable] :is(.tw-mic,.tw-voice){display:none}
@@ -498,7 +483,7 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
   .tw-pill:is([data-state=PENDING],[data-state=CHECKING])::before{animation:tw-blink 1.2s ease-in-out infinite}
   .tw-spinner{animation:tw-spin .8s linear infinite}
   #transport-review-panel[open]{animation:tw-sheet .28s cubic-bezier(.2,.8,.2,1)}
-  .tw-next,.tw-pending,#transport-new-case,#transport-chat-resume{animation:tw-in .2s ease-out both}
+  .tw-next,.tw-pending,#transport-new-case{animation:tw-in .2s ease-out both}
 }
 @keyframes tw-in{from{opacity:0;transform:translateY(6px)}}
 @keyframes tw-wave{0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1)}}
@@ -524,9 +509,6 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
   #transport-workspace:not([data-pending=true]) .tw-send{justify-content:center;width:48px;padding:0;font-size:0}
   #transport-workspace:not([data-pending=true]) .tw-send::before{width:20px;height:20px}
   #transport-workspace .tw-switch{padding:0 11px 0 10px}
-  /* The warning tab wraps to two lines and grows upward; the log keeps clear of it. */
-  #transport-workspace .tw-synthetic-line{white-space:normal;text-align:center}
-  #transport-messages{padding-bottom:36px;scroll-padding-bottom:36px}
   /* The decision chip takes the whole row so the hospital name is not cut; the other chips wrap under it. */
   #transport-workspace .tw-inquiries:has(.tw-btn-confirm){flex-wrap:wrap;max-height:40%;overflow-x:hidden;overflow-y:auto}
   #transport-workspace .transport-inquiry:has(.tw-btn-confirm){flex:1 0 100%;max-width:none}

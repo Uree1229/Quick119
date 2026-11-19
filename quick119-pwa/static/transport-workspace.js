@@ -108,12 +108,49 @@
     form.addEventListener('focusout', () => { clearTimeout(blurTimer); blurTimer = setTimeout(measure, 150); });
     measure();
   }
-  // A newly selected route is shown at the top of the map sheet (the route card is the sheet's first item).
-  document.addEventListener('quick119:route-select', () => { byId('sheet')?.scrollTo?.({top: 0}); });
+  const handle = byId('sheet-handle'), sheet = byId('sheet');
+  function showSheet(expanded) {
+    sheet.hidden = !expanded;
+    handle.setAttribute('aria-expanded', String(expanded));
+    handle.textContent = expanded ? '지도 크게 보기' : '병원 목록 보기';
+  }
+  let start = null, suppressClick = false;
+  handle.addEventListener('pointerdown', event => {
+    if (!event.isPrimary || event.button !== 0) return;
+    suppressClick = false;
+    start = {id: event.pointerId, x: event.clientX, y: event.clientY};
+    handle.setPointerCapture(event.pointerId);
+  });
+  handle.addEventListener('pointerup', event => {
+    if (start?.id !== event.pointerId) return;
+    const dx = Math.abs(event.clientX - start.x), dy = event.clientY - start.y;
+    start = null;
+    const dragged = Math.max(dx, Math.abs(dy)) >= 24;
+    suppressClick = dragged || event.pointerType === 'touch';
+    if (dragged) {
+      if (Math.abs(dy) > dx) showSheet(dy < 0);
+    } else if (event.pointerType === 'touch') {
+      showSheet(sheet.hidden);
+    }
+  });
+  const cancelDrag = event => {
+    if (start?.id === event.pointerId) { start = null; suppressClick = true; }
+  };
+  handle.addEventListener('pointercancel', cancelDrag);
+  handle.addEventListener('lostpointercapture', cancelDrag);
+  handle.addEventListener('click', event => {
+    // Swipes can produce a compatibility click; keyboard and AT activation have detail 0.
+    if (!event.detail || !suppressClick) showSheet(sheet.hidden);
+  });
+  document.addEventListener('quick119:route-select', () => {
+    showSheet(true);
+    sheet.scrollTo({top: 0});
+  });
   // A tapped map pin highlights its candidate card; it never inquires or routes by itself.
   document.addEventListener('quick119:candidate-focus', event => {
     const card = document.getElementById('transport-cand-' + event.detail?.id);
     if (!card) return;
+    showSheet(true);
     const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     card.scrollIntoView({behavior: calm ? 'auto' : 'smooth', block: 'nearest'});
     card.dataset.focus = 'true';

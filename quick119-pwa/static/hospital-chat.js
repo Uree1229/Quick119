@@ -13,9 +13,12 @@
   const $ = name => document.getElementById('transport-' + name);
   const root = document.getElementById('transport-workspace');
   const idPattern = /^Q119-TEST-[A-Za-z0-9-]{1,80}$/;
+  const seoulIdentity = hospital => hospital?.source_ids?.identity_source === 'seoul_public';
+  let seoulOrigin = null;
+  const intakeOrigin = () => seoulOrigin || (hospitals.length ? {lat: 35.1595, lon: 126.8526} : null);
   let pid = null, creation = null, hospitals = [], snapshot = null;
   let eventCursor = 0, messageCursor = 0, epoch = 0, timer = null, pollTask = null;
-  let stopped = false, suspended = document.hidden, operation = false, sending = false, fresh = false;
+  let suspended = document.hidden, operation = false, sending = false, fresh = false;
   let initialRead = true, pending = null, voiceListening = false, hospitalTask = null;
   let candidates = null, searchRevision = null, reviewUI = null, intake = null;
   let recognition = null;
@@ -38,7 +41,7 @@
     if (text !== undefined) node.textContent = text;
     return node;
   }
-  const active = () => !!pid && !stopped && !suspended;
+  const active = () => !!pid && !suspended;
   const path = () => '/api/patients/' + encodeURIComponent(pid);
   const sessionId = () => snapshot?.active_hospital_session?.id ?? null;
   const chatVisible = () => !$('chat').hidden && !document.hidden;
@@ -67,16 +70,24 @@
     $('mark-read').hidden = unread.size === 0;
   }
   function markRead() { if (chatVisible()) { unread.clear(); badge(); } }
-  // Conversational system items render as bubbles; other system events (inquiry, confirmation) as centred notices.
-  const conversational = new Set(['patient_created']);
+  const hiddenSystemEvents = new Set(['patient_created', 'intake_report_received']);
   function clock(at) {
     const date = new Date(at * 1000);
     return Number.isFinite(date.getTime()) ? date.toLocaleTimeString('ko-KR', {hour: 'numeric', minute: '2-digit'}) : '';
   }
+  function includeIntakeGreeting(page) {
+    const id = 'intake-welcome';
+    if (items.has(id)) return;
+    const created = page.items.find(item => item.kind === 'system' && item.type === 'patient_created');
+    // Older private rooms may have no creation event. Wait for the last page before adding their opening line.
+    if (!created && (page.has_more || page.active_hospital_session || page.conversation?.state !== 'OPEN')) return;
+    items.set(id, {id, kind: 'system', sender_role: 'system', sender_name: '시스템',
+      text: '환자 상태를 알려주세요.', at: created?.at, order_key: [-1]});
+  }
   function messageNode(item) {
     const node = el('div', 'transport-message'); node.id = 'transport-item-' + item.id;
     node.dataset.role = item.sender_role; node.dataset.itemId = item.id;
-    node.dataset.kind = item.kind === 'system' && item.type && !conversational.has(item.type) ? 'notice' : item.kind;
+    node.dataset.kind = item.kind === 'system' && item.type ? 'notice' : item.kind;
     // Plain text only: server text never becomes markup.
     node.append(el('small', 'transport-sender', item.sender_name || '시스템'),
       el('p', 'transport-bubble', item.text || item.body || ''), el('small', 'transport-time', clock(item.at)));
@@ -102,15 +113,22 @@
       if (index >= kept) $('messages').append(node);
     });
     renderedIds = ids;
-    $('intro').hidden = items.size > 0;
     if (chatVisible() && follow) { $('messages').scrollTop = $('messages').scrollHeight; markRead(); }
     else $('messages').scrollTop = scrollTop;
   }
   function merge(incoming, countNew) {
     const following = chatVisible() && atBottom();
     for (const item of incoming) {
-      if (items.has(item.id) || (item.kind === 'system' && item.type === 'intake_report_received')) continue;
-      items.set(item.id, item);
+      if (items.has(item.id) || (item.kind === 'system' && hiddenSystemEvents.has(item.type))) continue;
+      if (item.kind === 'system' && item.type === 'crew_intake_reply') {
+        // Commands are private UI turns, separate from the clinical reports shared with a hospital.
+        if (item.data?.command_text) {
+          const id = item.id + '-command';
+          items.set(id, {id, kind: 'command', sender_role: 'patient', sender_name: '구급대원',
+            text: item.data.command_text, at: item.at, order_key: item.order_key});
+        }
+        items.set(item.id, {...item, type: null, text: item.data.reply, order_key: [...item.order_key, 1]});
+      } else items.set(item.id, item);
       if (countNew && item.kind === 'message' && item.sender_role === 'hospital' && !following) unread.add(item.id);
     }
     renderMessages(); badge();
@@ -192,7 +210,7 @@
   function showHospitalContact() {
     const session = snapshot.active_hospital_session;
     const hospital = hospitals.find(item => item.id === session?.hospital_id);
-    const number = window.Quick119Intake.dialNumber(hospital?.phone);
+    const number = seoulIdentity(hospital) ? null : window.Quick119Intake.dialNumber(hospital?.phone);
     const name = session?.hospital_name || hospital?.name || session?.hospital_id;
     const box = $('hospital-contact');
     box.replaceChildren();
@@ -204,7 +222,8 @@
       });
       box.append(link);
     } else {
-      box.textContent = session ? name + '에 등록된 통화 가능 번호가 없습니다.' : '목적지로 확정된 병원이 아직 없습니다.';
+      box.textContent = seoulIdentity(hospital) ? '시연 담당자와 이송 채팅을 사용할 수 있습니다.'
+        : session ? name + '에 등록된 통화 가능 번호가 없습니다.' : '목적지로 확정된 병원이 아직 없습니다.';
     }
     contactSession = sessionId();
     box.hidden = false;
@@ -223,12 +242,11 @@
     $('review-draft').disabled = !canCompose() || sending;
     $('pending').textContent = pending ? '전송 결과가 확인되지 않은 요청을 메모리에 보관 중입니다. 원래 병원 참여 구간·내용으로만 재시도합니다.' : '';
     if (!pending && staleDraft) $('pending').textContent = '대화 참여자가 변경됐습니다. 초안을 현재 참여자에게 보내도 되는지 확인해 주세요.';
-    $('chat-stop').disabled = !pid || stopped || sending || operation;
-    $('chat-resume').hidden = !stopped; $('chat-resume').disabled = suspended;
-    $('case').textContent = pid ? '가상 접수: ' + pid : '';
     const hospital = snapshot?.active_hospital_session?.hospital_name;
+    const depart = $('depart');
+    depart.hidden = !sessionId() || snapshot?.conversation?.state !== 'OPEN' || snapshot.patient?.state !== 'CONFIRMED';
+    depart.disabled = depart.hidden || !active() || !fresh || operation || sending || voiceListening;
     let state = !pid ? operation ? '접수 채팅을 준비하고 있습니다.' : '접수 연결을 확인하지 못했습니다. 다시 시도해 주세요.'
-      : stopped ? '채팅 연결 종료 · GPS 안내는 유지됩니다.'
       : suspended ? '앱 백그라운드 · 복귀 시 대화를 다시 조회합니다.'
       : !fresh ? '접수 대화 확인 중 · 네트워크를 확인하세요.'
       : snapshot?.conversation?.state === 'CLOSED' ? '이송 대화 종료 · 이전 기록을 조회할 수 있습니다.'
@@ -238,8 +256,6 @@
     $('message-label').textContent = hospital ? '대화에 보낼 메시지' : '시스템에 보낼 환자 상태';
     // Short enough for one line beside the mic and send buttons; the label above names the recipient.
     $('message').placeholder = hospital ? '병원에 메시지 입력' : '환자 상태 입력';
-    $('sharing').textContent = hospital ? '참여 병원은 기존 보고와 현재 대화를 함께 확인합니다.'
-      : '목적지를 확정하면 해당 병원이 참여하며, 기존 보고도 함께 공유됩니다.';
     renderParticipants();
     // A hospital that already has an open inquiry cannot be asked twice from its card.
     const asked = new Set((snapshot?.inquiries || []).filter(q => openInquiryStates.has(q.state)).map(q => q.hospital_id));
@@ -248,7 +264,7 @@
         || (!!button.dataset.transportInquire && (!searchedCurrent() || !!pending || voiceListening || !!$('message').value.trim()
           || asked.has(button.dataset.transportInquire)));
     });
-    renderStage(!pid ? (operation ? 'pending' : 'error') : stopped ? 'stopped' : suspended ? 'paused'
+    renderStage(!pid ? (operation ? 'pending' : 'error') : suspended ? 'paused'
       : !fresh ? 'pending' : snapshot?.conversation?.state === 'CLOSED' ? 'closed' : 'live');
     renderDestination();
     reviewUI?.update();
@@ -264,6 +280,13 @@
     const bed = hospitals.find(h => h.id === id)?.resources?.find?.(r => r.resource_type === 'ed_bed');
     return bed && Number.isFinite(bed.free) ? bed : null;
   }
+  function selectRoute(hospital, retry = false) {
+    const identity = hospitals.find(h => h.id === hospital.id);
+    const detail = {name: hospital.name, lat: hospital.lat, lon: hospital.lon};
+    if (!retry) detail.hospital_id = hospital.id;
+    if (seoulIdentity(identity)) detail.demoOrigin = seoulOrigin;
+    document.dispatchEvent(new CustomEvent('quick119:route-select', {detail}));
+  }
   function renderHospitals() {
     $('hospitals').replaceChildren(); candidateCards.clear();
     (candidates || []).forEach((hospital, index) => {
@@ -273,7 +296,7 @@
       const titles = el('div', 'tw-cand-titles');
       titles.append(el('span', 'tw-sr', `${index + 1}순위 후보 `));
       const bed = bedFor(hospital.id), meters = Number(hospital.travel?.distance_meters);
-      const facts = [bed ? `응급병상 여유 ${bed.free}${Number.isFinite(bed.capacity) ? '/' + bed.capacity : ''}` : null,
+      const facts = [bed ? `시연 병상 여유 ${bed.free}${Number.isFinite(bed.capacity) ? '/' + bed.capacity : ''}` : null,
         meters > 0 ? `${(meters / 1000).toFixed(1)} km` : null, hospital.resources_enough === false ? '자원 확인 필요' : null].filter(Boolean);
       const state = el('span', 'tw-pill'); state.hidden = true;
       titles.append(el('strong', 'tw-cand-name', hospital.name),
@@ -291,8 +314,7 @@
       why.hidden = !notes.length;
       const route = el('button', 'tw-btn tw-btn-ghost tw-cand-route', '경로'); route.type = 'button';
       route.setAttribute('aria-label', `${hospital.name} 경로`);
-      route.addEventListener('click', () => document.dispatchEvent(new CustomEvent('quick119:route-select', {detail: {
-        name: hospital.name, lat: hospital.lat, lon: hospital.lon, hospital_id: hospital.id}})));
+      route.addEventListener('click', () => selectRoute(hospital));
       const inquire = el('button', 'tw-btn tw-btn-primary tw-cand-inquire', '수용 문의'); inquire.type = 'button';
       inquire.setAttribute('aria-label', `${hospital.name} 수용 문의`);
       inquire.dataset.transportInquire = hospital.id;
@@ -328,8 +350,7 @@
     const go = el('button', 'tw-btn tw-btn-cta tw-dest-go', '경로 보기'); go.type = 'button';
     // No hospital_id on purpose: this card is shown only while no route is displayed (e.g. after a GPS failure),
     // and car-routes.js ignores a repeat selection of the same hospital_id, which would make this a no-op.
-    go.addEventListener('click', () => document.dispatchEvent(new CustomEvent('quick119:route-select', {detail: {
-      name: hospital.name, lat: hospital.lat, lon: hospital.lon}})));
+    go.addEventListener('click', () => selectRoute(hospital, true));
     const icon = el('span', 'tw-inquiry-icon'); icon.setAttribute('aria-hidden', 'true');
     box.append(icon, copy, go);
   }
@@ -373,8 +394,7 @@
         confirm.addEventListener('click', () => runOperation(async () => {
           await api(path() + '/confirm', {inquiry_id: q.id}); await pollNow();
           const hospital = hospitals.find(h => h.id === q.hospital_id);
-          if (hospital) document.dispatchEvent(new CustomEvent('quick119:route-select', {detail: {
-            name: hospital.name, lat: hospital.lat, lon: hospital.lon, hospital_id: hospital.id}}));
+          if (hospital) selectRoute(hospital);
         }));
         if (confirm.dataset.transportConfirm === focusedId) restoreFocus = confirm;
         row.append(confirm);
@@ -403,7 +423,9 @@
           const nextSession = data.active_hospital_session?.id ?? null;
           if (sessionId() !== nextSession) document.dispatchEvent(new CustomEvent('quick119:session-change', {
             detail: {previous: sessionId(), session: nextSession}}));
-          snapshot = data; merge(data.items, !initialRead);
+          snapshot = data;
+          if (initialRead) includeIntakeGreeting(data);
+          merge(data.items, !initialRead);
           eventCursor = data.cursors.event_id; messageCursor = data.cursors.message_id;
           more = data.has_more;
         } while (more);
@@ -429,8 +451,17 @@
     hospitalTask = (async () => {
       try {
         const list = await api('/api/hospitals');
-        if (!Array.isArray(list) || !list.length || list.some(h => h.source !== 'synthetic' || !/^H(0[1-9]|10)$/.test(h.id))) throw new Error('가상 병원 목록을 확인할 수 없습니다.');
-        hospitals = list; renderHospitals();
+        if (!Array.isArray(list) || !list.length || list.some(h => h.source !== 'synthetic' || !/^H(0[1-9]|10)$/.test(h.id))) throw new Error('시연 병원 목록을 확인할 수 없습니다.');
+        if (list.some(seoulIdentity)) {
+          const catalog = await api('/static/seoul-demo-hospitals.json');
+          if (!Number.isFinite(catalog.origin?.lat) || !Number.isFinite(catalog.origin?.lon)) throw new Error('서울 시연 출발 위치를 확인할 수 없습니다.');
+          seoulOrigin = catalog.origin;
+        } else {
+          seoulOrigin = null;
+        }
+        hospitals = list;
+        if ($('catalog-note')) $('catalog-note').hidden = !seoulOrigin;
+        renderHospitals();
         $('reload-hospitals').hidden = true;
       } catch (failure) {
         if (!candidates) $('hospital-status').textContent = '병원 기본 목록을 불러오지 못했습니다. 접수 대화와 최종 확인 후 후보 탐색은 계속할 수 있습니다.';
@@ -450,6 +481,11 @@
       if (latest.version !== expectedVersion || latest.inquiries?.length || latest.state !== 'WAITING') throw new Error('환자 정보나 문의 상태가 변경됐습니다. 다시 조회해 주세요.');
       // Map-only: the conversation view omits coordinates, so keep the saved search origin for the overview pin.
       caseOrigin = Number.isFinite(latest.lat) && Number.isFinite(latest.lon) ? {lat: latest.lat, lon: latest.lon} : null;
+      if (!caseOrigin) {
+        if (!hospitals.length) await loadHospitals();
+        caseOrigin = intakeOrigin();
+        if (caseOrigin) patch = {...patch, ...caseOrigin};
+      }
       if (ticket !== epoch || !active() || token !== reviewToken()) throw new Error('대화나 보고가 변경됐습니다. 최신 내용을 다시 확인한 뒤 탐색해 주세요.');
       // The reviewed token covers the patient version; preserve all non-edited extra fields.
       const updated = patch === null ? latest : await api(path(), patch, 'PATCH');
@@ -471,8 +507,9 @@
   async function createCase() {
     if (pid || invalidRestored) return;
     const ticket = epoch;
+    if (!hospitals.length && !creation) await loadHospitals();
     if (!creation) creation = {id: 'Q119-TEST-' + newMessageId(), reporter_role: 'transporter', consent: true,
-      age: null, symptoms: null, priority_source: 'unknown', lat: 35.1595, lon: 126.8526,
+      age: null, symptoms: null, priority_source: 'unknown', ...intakeOrigin(),
       extra: {synthetic_fixture: true, creation_token: newMessageId()}};
     let data;
     try { data = await api('/api/patients', creation); }
@@ -482,12 +519,29 @@
     }
     if (data.id !== creation.id || data.extra?.creation_token !== creation.extra.creation_token) throw new Error('가상 이송 생성 결과를 확인하지 못했습니다.');
     if (ticket !== epoch) return;
-    pid = data.id; epoch++; stopped = false;
+    pid = data.id; epoch++;
     const url = new URL(location.href); url.searchParams.set('pid', pid); history.replaceState(null, '', url);
     renderHospitals(); await pollNow();
   }
   $('new-case').addEventListener('click', () => runOperation(createCase));
   $('reload-hospitals').addEventListener('click', () => { void loadHospitals(); });
+  $('depart').addEventListener('click', () => {
+    if ($('depart').disabled) return;
+    const session = sessionId(), version = snapshot.patient.version, ticket = epoch;
+    void runOperation(async () => {
+      if (!await pollNow() || ticket !== epoch || !active()) throw new Error('최신 이송 상태를 확인해 주세요.');
+      if (session !== sessionId() || version !== snapshot.patient.version || snapshot.patient.state !== 'CONFIRMED')
+        throw new Error('환자 상태가 바뀌었습니다. 목적지를 다시 확인해 주세요.');
+      try {
+        await api(path() + '/depart', {expected_version: version});
+      } catch (failure) {
+        // A response can be lost after the server records departure. Re-read before offering a retry.
+        if (await pollNow() && session === sessionId() && snapshot.patient.state === 'IN_TRANSIT') return;
+        throw failure;
+      }
+      await pollNow();
+    });
+  });
   function confirms(result, request) {
     const m = result?.message;
     return typeof result?.duplicate === 'boolean' && m?.kind === 'message' && m.sender_role === 'patient'
@@ -534,7 +588,7 @@
         throw new Error('저장 결과를 확인하지 못했습니다. 같은 요청으로 재시도하세요.');
       }
       if (ticket !== epoch || !active()) throw new Error('전송 결과를 다시 확인해야 합니다. 원래 요청으로 재시도해 주세요.');
-      if (result.message) merge([result.message, ...(result.system_items || [])], false);
+      merge([...(result.message ? [result.message] : []), ...(result.system_items || [])], false);
       if (request.input) { receipt = result; searchRevision = null; }
       pending = null; draftSession = undefined; recognition = null; $('message').value = '';
     } catch (failure) {
@@ -557,11 +611,6 @@
     if (sending) return;
     pending = null; controls(); error('재시도 요청만 지웠습니다. 서버에는 이미 저장됐을 수 있으므로 대화를 확인한 뒤 새 메시지를 보내세요.');
   });
-  $('chat-stop').addEventListener('click', () => {
-    if (sending || operation) return;
-    stopped = true; epoch++; clearTimeout(timer); timer = null; abortRequests(); controls();
-  });
-  $('chat-resume').addEventListener('click', () => { stopped = false; epoch++; controls(); void pollNow(); });
   $('mark-read').addEventListener('click', () => { $('messages').scrollTop = $('messages').scrollHeight; markRead(); });
   $('messages').addEventListener('scroll', () => { if (atBottom()) markRead(); });
   document.addEventListener('quick119:view', () => {
@@ -573,8 +622,8 @@
   function resume() {
     if (document.hidden) return;
     suspended = false; controls();
-    if (pid && !stopped) void pollNow();
-    else if (!pid && !invalidRestored) void runOperation(createCase);
+    if (pid) void pollNow();
+    else if (!invalidRestored) void runOperation(createCase);
     if (!hospitals.length) void loadHospitals();
   }
   document.addEventListener('visibilitychange', () => document.hidden ? suspend() : resume());
@@ -584,6 +633,7 @@
   const invalidRestored = !!restored && !idPattern.test(restored);
   if (restored) { if (idPattern.test(restored)) pid = restored; else error('가상 이송 ID만 열 수 있습니다.'); }
   intake = window.Quick119Intake?.bind({$, api, path, uuid: () => newMessageId(), error,
+    showItems: entries => merge(entries, false),
     canEdit: () => !!intakeEnabled() && !reviewState().blockedReason,
     search: async () => {
       if (!await pollNow()) throw new Error('저장 정보를 다시 조회해 주세요.');

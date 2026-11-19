@@ -30,7 +30,7 @@
     return /^(?:0|\+82)(?:2\d{7,8}|[3-6]\d{8,9}|70\d{8})$/.test(number) ? number : '';
   }
 
-  window.Quick119Intake = {isHospitalCall, dialNumber, bind({$, api, path, uuid, canEdit, search, error}) {
+  window.Quick119Intake = {isHospitalCall, dialNumber, bind({$, api, path, uuid, canEdit, search, error, showItems}) {
     const panel = $('command-panel');
     if (!panel) return null;
     let draft, loading, intent, reviewed, posting = false, followup = null, answering = null;
@@ -71,11 +71,13 @@
     function handle(result) {
       draft = result.draft; lastHints = result.hints || [];
       const current = JSON.stringify(revision()) === JSON.stringify(result.revision);
-      feedback([result.feedback, ...lastHints].filter(Boolean).join('\n'));
+      // The receipt is already in the chat. Keep recognition warnings beside the controls.
+      const inChat = result.system_items?.find(item => item.type === 'crew_intake_reply');
+      feedback([inChat ? '' : result.feedback, ...lastHints].filter(Boolean).join('\n'));
       if (current && ['review','repeat_question','missing'].includes(result.action) &&
           window.speechSynthesis && window.SpeechSynthesisUtterance) {
         window.speechSynthesis.cancel();
-        const reading = new SpeechSynthesisUtterance(result.feedback);
+        const reading = new SpeechSynthesisUtterance(inChat?.data.reply || result.feedback);
         reading.lang = 'ko-KR'; window.speechSynthesis.speak(reading);
       }
       followup = current && ['missing','repeat_question'].includes(result.action) ? draft?.followup?.next_question : null;
@@ -102,9 +104,10 @@
       try {
         const response = await api(endpoint() + '/confirm', confirmation.body);
         draft = response.draft;
+        if (response.system_items) showItems(response.system_items);
         if (intent === 'search') await search();
         panel.close();
-        feedback(intent === 'search' ? '확인한 환자정보를 반영했습니다.' : '현재 버전의 환자정보를 확정했습니다.');
+        feedback(response.system_items ? '' : intent === 'search' ? '확인한 환자정보를 반영했습니다.' : '현재 버전의 환자정보를 확정했습니다.');
         confirmation = null;
       } catch (failure) {
         $('command-warnings').textContent = failure.message;

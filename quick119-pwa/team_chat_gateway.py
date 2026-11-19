@@ -68,8 +68,8 @@ async def forward(request: Request):
             raise HTTPException(403, "Q119-TEST- 가상 이송 건만 연결할 수 있습니다.")
         if key == "hid" and value not in {f"H{i:02d}" for i in range(1, 11)}:
             raise HTTPException(403, "가상 병원 H01~H10만 연결할 수 있습니다.")
-        if key in {"iid", "eid"} and not re.fullmatch(r"[1-9][0-9]{0,18}", value):
-            raise HTTPException(400, "문의 ID가 올바르지 않습니다.")
+        if key in {"iid", "eid", "rid", "aid"} and not re.fullmatch(r"[1-9][0-9]{0,18}", value):
+            raise HTTPException(400, "기록 ID가 올바르지 않습니다.")
     if len(request.url.query) > 2048:
         raise HTTPException(400, "조회 조건이 너무 깁니다.")
     body = bytearray()
@@ -77,7 +77,7 @@ async def forward(request: Request):
         body.extend(chunk)
         if len(body) > MAX_BYTES:
             raise HTTPException(413, "요청이 너무 큽니다.")
-    if request.method in {"POST", "PATCH"}:
+    if request.method in {"POST", "PATCH", "DELETE"}:
         try:
             payload = json.loads(body)
             if not isinstance(payload, dict):
@@ -142,6 +142,13 @@ for method, path in (
     ("GET", "/api/hospitals/{hid}/inquiries"),
     ("GET", "/api/hospitals/{hid}/incoming"),
     ("GET", "/api/hospitals/{hid}/transport-change-reviews"),
+    ("GET", "/api/hospitals/{hid}/data-provenance"),
+    ("GET", "/api/hospitals/{hid}/call-records"),
+    ("POST", "/api/hospitals/{hid}/restrictions"),
+    ("DELETE", "/api/hospitals/{hid}/restrictions/{rid}"),
+    ("GET", "/api/hospitals/{hid}/external-arrivals"),
+    ("POST", "/api/hospitals/{hid}/external-arrivals"),
+    ("POST", "/api/hospitals/{hid}/external-arrivals/{eid}/discharge"),
     ("POST", "/api/patients"),
     ("GET", "/api/patients/{pid}"),
     ("PATCH", "/api/patients/{pid}"),
@@ -154,8 +161,18 @@ for method, path in (
     ("POST", "/api/patients/{pid}/inquiries"),
     ("POST", "/api/inquiries/{iid}/respond"),
     ("POST", "/api/patients/{pid}/confirm"),
+    ("POST", "/api/patients/{pid}/depart"),
     ("GET", "/api/patients/{pid}/conversation"),
     ("POST", "/api/patients/{pid}/messages"),
+    ("POST", "/api/hospitals/{hid}/patients/{pid}/decision"),
+    ("POST", "/api/hospitals/{hid}/patients/{pid}/arrive"),
+    ("POST", "/api/hospitals/{hid}/patients/{pid}/discharge"),
+    ("POST", "/api/hospitals/{hid}/patients/{pid}/call-records"),
+    ("POST", "/api/hospitals/{hid}/patients/{pid}/call-records/{rid}/confirmation"),
+    ("GET", "/api/hospitals/{hid}/patients/{pid}/work-activities"),
+    ("GET", "/api/hospitals/{hid}/patients/{pid}/work-activities/summary"),
+    ("POST", "/api/hospitals/{hid}/patients/{pid}/work-activities"),
+    ("POST", "/api/hospitals/{hid}/patients/{pid}/work-activities/{aid}/stop"),
     ("GET", "/api/hospitals/{hid}/patients/{pid}/conversation"),
     ("POST", "/api/hospitals/{hid}/patients/{pid}/messages"),
     ("GET", "/api/hospitals/{hid}/patients/{pid}/important-events"),

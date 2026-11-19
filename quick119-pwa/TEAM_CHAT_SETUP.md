@@ -1,6 +1,6 @@
 # 팀 채팅 서버 준비 결과
 
-> 이 문서는 첫 서버 연결 단계의 기록입니다. 이후 완료한 GPS·채팅 UI와 현재 실행 방법은 [TRANSPORT_UI.md](TRANSPORT_UI.md)를 따르세요.
+> 이 문서는 11월 17일 서버 연결 실험 기록입니다. 현재 시연은 같은 저장소의 `server/`, `hospital-ui/`, `quick119-pwa/`를 사용합니다. 현재 실행 방법은 [TRANSPORT_UI.md](TRANSPORT_UI.md)를 따르세요.
 
 기준일: 2026-11-17 (Asia/Seoul)
 

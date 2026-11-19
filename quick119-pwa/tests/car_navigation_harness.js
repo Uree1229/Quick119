@@ -31,11 +31,12 @@
     const id = nextTimer++; requestTimers.set(id, fn); return id;
   };
   window.clearTimeout = id => { requestTimers.delete(id); realClearTimeout(id); };
+  let manualCoords = {latitude: 37.5, longitude: 127, accuracy: 10};
   const gps = {
     getCurrentPosition(ok, fail) {
       if (delayGet) { pendingGet = ok; return; }
       if (denyGet) fail({code: 1});
-      else ok({coords: {latitude: 37.5, longitude: 127, accuracy: 10}, timestamp: now});
+      else ok({coords: manualCoords, timestamp: now});
     },
     watchPosition(ok, fail, options) {
       assert(options.enableHighAccuracy && options.maximumAge === 0, 'Fresh high accuracy tracking');
@@ -50,6 +51,9 @@
   const route = (request, distance = 2000) => ({code: 'ok', distance_m: distance, duration_sec: 300,
     coordinates: [[127, 37.5], [127, request.destination.lat]], cached: false});
   window.fetch = async (url, options) => {
+    if (url === '/static/seoul-demo-boundary.json') return response({ring: [
+      [126.90, 37.48], [127.01, 37.48], [127.01, 37.54], [126.95, 37.54], [126.90, 37.48],
+    ]}, mode !== 'boundary-offline');
     assert(url === '/api/routes/car', 'Only existing route endpoint');
     const body = JSON.parse(options.body);
     assert(options.cache === 'no-store' && options.signal, 'Uncached cancellable route request');
@@ -266,6 +270,35 @@
     check(following() && centered(37.5011) && map.getZoom() === initialZoom + 1, 'Future GPS continues following after restoration');
     stop();
     check(requestTimers.size === 0 && intervals.size === 0, 'All request timers and GPS watchdogs cleaned up');
+    const priorCalls = calls.length, priorWatches = watchers.length;
+    secure = false;
+    const demoOrigin = {lat:37.5051, lon:126.9573};
+    document.dispatchEvent(new CustomEvent('quick119:route-select', {detail:{
+      name:'중앙대학교병원', hospital_id:'H01', lat:37.50707428493414, lon:126.9608, demoOrigin,
+    }}));
+    await settle();
+    check(!el('result').hidden && el('duration').textContent === '약 1분' && el('destination').textContent.startsWith('서울 시연 출발지'),
+      'Fixed Seoul estimate works without any GPS grant on HTTP');
+    start(); await settle();
+    check(watchers.length === priorWatches && el('gps').textContent.includes('HTTPS'), 'HTTP retains the local preview and explains secure GPS');
+    secure = true; mode = 'boundary-offline';
+    start(); await settle();
+    check(watchers.length === priorWatches && el('gps').textContent.includes('경계'), 'Missing city boundary preserves route without launching GPS');
+    mode = 'ok'; start(); await settle();
+    check(watchers.length === priorWatches + 1, 'Explicit Seoul tracking uses an available secure GPS watch');
+    await fix(35.1595, 126.8526);
+    check(marker().getLatLng().equals([demoOrigin.lat, demoOrigin.lon]) && el('gps').textContent.includes('밖'), 'Out-of-city GPS never changes the fixed preview');
+    await fix(37.53, 126.905);
+    check(marker().getLatLng().equals([demoOrigin.lat, demoOrigin.lon]), 'An out-of-polygon fix inside the bounding rectangle is ignored');
+    await fix(37.506, 126.958);
+    check(marker().getLatLng().equals([37.506,126.958]) && el('destination').textContent.startsWith('현재 GPS'), 'In-city tracking renders a live point with a GPS label');
+    stop();
+    manualCoords = {latitude:35.1595,longitude:126.8526,accuracy:10};
+    el('refresh').click(); await settle();
+    check(marker().getLatLng().equals([37.506,126.958]) && el('gps').textContent.includes('밖'), 'Out-of-city manual refresh preserves the previous valid fix');
+    manualCoords = {latitude:37.508,longitude:126.958,accuracy:10};
+    el('refresh').click(); await settle();
+    check(marker().getLatLng().equals([37.508,126.958]) && calls.length === priorCalls, 'In-city manual refresh computes local synthetic travel without route-network calls');
     return {checks: checks.length, passed: checks};
   } finally {
     stop();

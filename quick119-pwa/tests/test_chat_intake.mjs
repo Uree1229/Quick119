@@ -9,7 +9,7 @@ const sources = Object.fromEntries(['chat-voice', 'hospital-chat', 'transport-wo
   [name, readFileSync(fileURLToPath(new URL('../static/' + name + '.js', import.meta.url)), 'utf8')]));
 const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)); };
 
-function harness({restored = false, hospitalFailure = false, speech = true, viewport = false, embedded = false} = {}) {
+function harness({restored = false, hospitalFailure = false, seoul = false, speech = true, viewport = false, embedded = false, conversationPages = []} = {}) {
   const nodes = new Map(), allNodes = new Set(), calls = [], timers = new Map(), speeches = [];
   let nextTimer = 0, uuid = 0;
   class Events {
@@ -28,9 +28,9 @@ function harness({restored = false, hospitalFailure = false, speech = true, view
     replaceChildren(...children) { this.children = []; this.append(...children); }
     focus() {}
   }
-  const ids = ['workspace', 'chat', 'gps', 'message', 'message-label', 'message-form', 'messages', 'intro',
-    'participants', 'sharing', 'voice-start', 'voice-stop', 'voice-status', 'voice-interim', 'new-case', 'send',
-    'discard', 'review-draft', 'pending', 'chat-stop', 'chat-resume', 'case', 'connection', 'chat-status',
+  const ids = ['workspace', 'chat', 'gps', 'sheet', 'sheet-handle', 'catalog-note', 'message', 'message-label', 'message-form', 'messages',
+    'participants', 'depart', 'voice-start', 'voice-stop', 'voice-status', 'voice-interim', 'new-case', 'send',
+    'discard', 'review-draft', 'pending', 'connection', 'chat-status',
     'hospitals', 'voice-panel', 'hospital-contact', 'hospital-status', 'reload-hospitals', 'inquiries', 'error', 'unread', 'toggle', 'toggle-label',
     'title', 'mark-read', 'review-panel', 'patient-info', 'start-search', 'review-close', 'review-close-top', 'review-form', 'search-status'];
   for (const id of ids) { const node = new Element(); node.id = 'transport-' + id; }
@@ -64,7 +64,7 @@ function harness({restored = false, hospitalFailure = false, speech = true, view
   if (speech) window.SpeechRecognition = Speech;
   const state = {session: null, failMessageOnce: false, beforeConversation: null, messages: [], inquiries: [], receipts: new Map()};
   const patientId = 'Q119-TEST-restored';
-  const welcome = {id: 'event:1', kind: 'system', sender_role: 'system', sender_name: '시스템', at: 1,
+  const welcome = {id: 'event:1', kind: 'system', type: 'patient_created', sender_role: 'system', sender_name: '시스템', at: 1,
     text: '환자 상태를 보고해 주세요.', order_key: [1, 0, 1]};
   function snapshot() {
     return {conversation: {state: 'OPEN'}, can_send: true, active_hospital_session: state.session,
@@ -75,12 +75,14 @@ function harness({restored = false, hospitalFailure = false, speech = true, view
   async function fetch(url, options) {
     const body = options.body ? JSON.parse(options.body) : undefined;
     calls.push({url, body, method: options.method});
+    if (url === '/static/seoul-demo-hospitals.json') return response({origin:{lat:37.5051,lon:126.9573}});
     if (url === '/api/hospitals') {
+      if (seoul) return response([{id:'H01', name:'시연 대상 병원', source:'synthetic', source_ids:{identity_source:'seoul_public'}}]);
       if (hospitalFailure) throw new Error('hospital list offline');
       return response([{id: 'H01', name: '가상 병원 H01', source: 'synthetic', lat: 35.1, lon: 126.8}]);
     }
     if (url === '/api/patients') return response(body);
-    if (url.includes('/conversation?')) { state.beforeConversation?.(); state.beforeConversation = null; return response(snapshot()); }
+    if (url.includes('/conversation?')) { state.beforeConversation?.(); state.beforeConversation = null; return response({...snapshot(), ...conversationPages.shift()}); }
     if (url.endsWith('/messages')) {
       let receipt = state.receipts.get(body.client_message_id);
       if (!receipt) {
@@ -122,6 +124,12 @@ test('auto-created private intake works even if the hospital list fails; no fabr
   assert.equal(creates.length, 1); assert.equal(creates[0].body.age, null); assert.equal(creates[0].body.symptoms, null);
   assert.equal(h.$('chat').hidden, false); assert.equal(h.$('gps').hidden, true); assert.equal(h.$('message').disabled, false);
   assert.deepEqual(h.$('participants').children.map(node => node.textContent), ['시스템', '구급대원']);
+  const greeting = h.$('messages').children[0];
+  assert.equal(h.$('messages').children.length, 1);
+  assert.equal(greeting.dataset.role, 'system');
+  assert.equal(greeting.children[1].textContent, '환자 상태를 알려주세요.');
+  await h.poll();
+  assert.deepEqual(h.$('messages').children.map(node => node.id), [greeting.id]);
   h.type('60세 남성, 가상 환자 상태 보고'); await h.submit();
   const posts = h.calls.filter(call => call.url.endsWith('/messages'));
   assert.equal(posts.length, 1); assert.equal(posts[0].body.hospital_session_id, null);
@@ -130,10 +138,38 @@ test('auto-created private intake works even if the hospital list fails; no fabr
   assert.ok(h.$('messages').children.some(node => node.id === 'transport-item-message:1'));
 });
 
-test('reloading a pid restores the same conversation and never creates another case', async () => {
-  const h = harness({restored: true}); await settle();
+test('a Seoul public identity selects the local Seoul demo origin', async () => {
+  const h = harness({seoul:true}); await settle();
+  const created = h.calls.find(call => call.url === '/api/patients').body;
+  assert.deepEqual([created.lat, created.lon], [37.5051, 126.9573]);
+  assert.equal(h.$('catalog-note').hidden, false);
+});
+
+test('reloading a pid restores one short welcome before notices from the next history page', async () => {
+  const notice = {id: 'event:2', kind: 'system', type: 'inquiry_created', sender_role: 'system',
+    text: '병원에 수용을 문의했습니다.', at: 2, order_key: [2, 0, 2]};
+  const h = harness({restored: true, conversationPages: [
+    {has_more: true}, {items: [notice], cursors: {event_id: 2, message_id: 0}},
+  ]});
+  await settle();
+  assert.ok(h.calls.some(call => call.url.includes('event_cursor=1&')));
+  assert.deepEqual(h.$('messages').children.map(node => node.id), ['transport-item-intake-welcome', 'transport-item-event:2']);
+  const [greeting, message] = h.$('messages').children;
+  assert.equal(greeting.children[1].textContent, '환자 상태를 알려주세요.');
+  assert.equal(message.dataset.kind, 'notice');
+  assert.equal(message.children[1].textContent, notice.text);
   assert.equal(h.calls.filter(call => call.url === '/api/patients').length, 0);
   assert.equal(h.$('new-case').hidden, true); assert.equal(h.$('message').disabled, false);
+});
+
+test('legacy open intake without a creation event receives a single welcome, but a joined room does not gain one', async () => {
+  const h = harness({restored: true, conversationPages: [{items: []}, {items: []}]});
+  await settle(); await h.poll();
+  assert.deepEqual(h.$('messages').children.map(node => node.id), ['transport-item-intake-welcome']);
+  assert.equal(h.$('messages').children[0].children[2].textContent, '');
+  const joined = harness({restored: true, conversationPages: [{items: [], active_hospital_session: {id: 7, hospital_id: 'H01'}}]});
+  await settle();
+  assert.equal(joined.$('messages').children.length, 0);
 });
 
 test('private draft requires explicit review when a confirmed hospital joins', async () => {

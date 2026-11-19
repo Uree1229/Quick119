@@ -12,7 +12,7 @@
 </head>
 <body>
 <div class="app-shell{% block shell_class %}{% endblock %}">
-  {% if app_env != 'production' %}<div class="environment-note">개발·테스트 환경 · 실제 신고 및 병원 API 연동 안 함</div>{% endif %}
+  {% block environment_note %}{% if app_env != 'production' %}<div class="environment-note">개발·테스트 환경 · 실제 신고 및 병원 API 연동 안 함</div>{% endif %}{% endblock %}
   {% block header %}
   <header class="app-header">
     <a class="back-button" href="/" aria-label="홈으로 돌아가기">{{ icon('back') }}</a>
