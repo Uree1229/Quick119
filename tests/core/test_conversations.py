@@ -1,6 +1,6 @@
 """환자별 이송 대화방의 업무 상태, 병원별 열람 범위와 재전송 안전성.
 
-실행: python scripts/test_suites.py python test_conversations
+실행: python -m unittest discover -s tests/core -p test_conversations.py
 실제 의료·지도 API나 운영 DB를 사용하지 않는다.
 """
 import json

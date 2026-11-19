@@ -25,8 +25,6 @@ from . import enroute_patient_review, data_provenance
 
 STATIC = Path(__file__).parent / 'static'
 UI_ROOTS = {
-    '/paramedic/': Path(__file__).resolve().parents[1] / 'paramedic-ui',
-    '/patient/': Path(__file__).resolve().parents[1] / 'patient-ui',
     '/hospital/': Path(__file__).resolve().parents[1] / 'hospital-ui',
 }
 ROUTES = []

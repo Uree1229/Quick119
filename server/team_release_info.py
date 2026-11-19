@@ -1,5 +1,4 @@
 """Identify an exact release at startup without trusting an unverified label."""
-import json
 import importlib.metadata
 from pathlib import Path
 
@@ -37,19 +36,4 @@ def release_info(root=None):
     if not manifest.exists():
         return dict(status='unpackaged', verified=False,
                     note='Development source; no common release manifest.')
-    # A neighbouring file is not enough: only the package's source directory
-    # can claim the identity, and its complete inventory must match.
-    if root.name != 'source':
-        raise ValueError('Release manifest requires its source directory.')
-    from .team_release_20261030 import verify_release
-    try:
-        report = verify_release(release)
-        if not report['ok']:
-            raise ValueError('Release source integrity failed: ' + '; '.join(report['issues'][:4]))
-        value = json.loads(manifest.read_text(encoding='utf-8'))
-    except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
-        raise ValueError('Release manifest is unavailable or invalid.') from error
-    return dict(status='verified_at_startup', verified=True,
-        release_id=report['release_id'], label=value.get('label', report['release_id']),
-        manifest_sha256=report['manifest_sha256'], content_sha256=report['content_sha256'],
-        file_count=report['file_count'], verification_scope='source inventory and bytes at process startup')
+    raise ValueError('Legacy release packages are not supported by this source tree.')

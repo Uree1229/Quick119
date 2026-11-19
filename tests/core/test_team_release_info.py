@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -42,29 +41,13 @@ class ReleaseIdentityTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release_info(root)
 
-    def test_failed_integrity_never_claims_verified(self):
+    def test_legacy_release_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / 'source'
             root.mkdir()
             (root.parent/'release-manifest.json').write_text('{}')
-            with patch('server.team_release_20261030.verify_release', return_value={
-                    'ok':False, 'issues':['changed file']}):
-                with self.assertRaisesRegex(ValueError, 'changed file'):
-                    release_info(root)
-
-    def test_identity_comes_from_verified_manifest(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary) / 'source'
-            root.mkdir()
-            (root.parent/'release-manifest.json').write_text(json.dumps({'label':'team-v1'}))
-            report = dict(ok=True, release_id='team-v1:123', manifest_sha256='a'*64,
-                          content_sha256='b'*64, file_count=3)
-            with patch('server.team_release_20261030.verify_release', return_value=report) as verify:
-                result = release_info(root)
-            verify.assert_called_once_with(root.parent)
-            self.assertTrue(result['verified'])
-            self.assertEqual(result['label'], 'team-v1')
-            self.assertEqual(result['manifest_sha256'], 'a'*64)
+            with self.assertRaisesRegex(ValueError, 'not supported'):
+                release_info(root)
 
     def test_release_failure_precedes_database_and_socket_work(self):
         with tempfile.TemporaryDirectory() as temporary:

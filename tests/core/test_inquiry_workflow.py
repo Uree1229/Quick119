@@ -1,6 +1,6 @@
 """서버 자동 문의: 실제 수용 확인은 사람에게 남기고 제한된 후보 탐색만 진행한다.
 
-실행: python scripts/test_suites.py python test_inquiry_workflow
+실행: python -m unittest discover -s tests/core -p test_inquiry_workflow.py
 모든 환자·병원·시각은 임시 DB의 가상 값이다. 외부 API를 호출하지 않는다.
 """
 import json
