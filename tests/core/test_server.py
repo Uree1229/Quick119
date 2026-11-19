@@ -1,6 +1,6 @@
 """공통 서버 업무 규칙 테스트 (T02~T05, S05·S07, H23·H24·H25, H33~H38).
 
-실행: python scripts/test_suites.py python test_server
+실행: python -m unittest discover -s tests/core -p test_server.py
 """
 import json
 import tempfile
@@ -12,7 +12,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-from server import db, probe_apis, scenario, service, synthetic
+from server import db, scenario, service, synthetic
 from server.app import make_handler
 from server.service import ServiceError
 from server.travel import TravelEstimator
@@ -309,18 +309,6 @@ class Synthetic(unittest.TestCase):
             service.candidates(conn, T0, pid, EST)
 
 
-class Probe(unittest.TestCase):
-    def test_scrub_and_inventory(self):
-        key = 'abc+def/=='
-        self.assertNotIn('abc', probe_apis.scrub('serviceKey=abc%2Bdef%2F%3D%3D&x=abc+def/==', key))
-        xml = ('<response><header><resultCode>00</resultCode></header><body><items>'
-               '<item><a>1</a><b></b></item><item><a>2</a></item></items><totalCount>2</totalCount></body></response>')
-        header, n, fields = probe_apis.inventory_xml(xml)
-        self.assertEqual((header['resultCode'], n), ('00', 2))
-        self.assertEqual(fields['a'], dict(present=2, empty=0, samples=['1', '2'], missing=0))
-        self.assertEqual(fields['b'], dict(present=1, empty=1, samples=[], missing=1))
-
-
 class Scenario(unittest.TestCase):
     def test_every_stage_builds_in_time_order(self):
         for stage in scenario.STAGES:
@@ -337,6 +325,21 @@ class Scenario(unittest.TestCase):
 
 
 class Http(Base):
+    def test_only_hospital_ui_is_mounted(self):
+        server = ThreadingHTTPServer(('127.0.0.1', 0), make_handler(self.path, EST))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f'http://127.0.0.1:{server.server_port}'
+        try:
+            with urllib.request.urlopen(base + '/hospital/') as response:
+                self.assertEqual(response.status, 200)
+            for path in ('/paramedic/', '/patient/'):
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    urllib.request.urlopen(base + path)
+                self.assertEqual(error.exception.code, 404)
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_team_ui_roots_keep_assets_and_block_directory_escape(self):
         from server import app
         root = Path(self.path).parent / 'ui-fixture'

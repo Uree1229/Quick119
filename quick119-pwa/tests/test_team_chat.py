@@ -210,7 +210,8 @@ class LiveTeamChat(unittest.TestCase):
         handle = (cls.run_dir / (name + ".log")).open("w", encoding="utf-8")
         cls.handles.append(handle)
         cls.processes.append(subprocess.Popen(command, cwd=ROOT, env=env, stdout=handle,
-                                              stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW))
+                                              stderr=subprocess.STDOUT,
+                                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)))
 
     @classmethod
     def cleanup(cls):
