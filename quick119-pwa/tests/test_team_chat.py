@@ -99,6 +99,67 @@ class GatewayGuards(unittest.TestCase):
                 self.assertNotIn("secret", response.text)
 
 
+class TransportSpeech(unittest.TestCase):
+    def setUp(self):
+        import team_chat_ui
+        self.ui = team_chat_ui
+        app = FastAPI()
+        app.include_router(team_chat_ui.router)
+        self.client = TestClient(app, client=("127.0.0.1", 51000))
+        env = patch.dict(os.environ, QUICK119_ENV="test", QUICK119_TEAM_CHAT_ENABLED="1",
+                         QUICK119_TEAM_CHAT_URL="http://127.0.0.1:18033")
+        env.start()
+        self.addCleanup(env.stop)
+
+    def test_pc_voice_is_local_same_origin_and_bounded(self):
+        speech = self.ui.tts_audio
+        with patch.dict(speech._cache, clear=True), patch.object(speech, "neural_enabled", return_value=False), \
+                patch.object(speech, "_render", return_value=b"offline-wave") as render:
+            response = self.client.post("/api/transport-tts", json={"text": "  가상   안내  "})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["content-type"], "audio/wav")
+            self.assertEqual(response.headers["cache-control"], "no-store")
+            self.assertEqual(response.content, b"offline-wave")
+            with TestClient(self.client.app, client=("192.168.0.50", 51000)) as lan:
+                self.assertEqual(lan.post("/api/transport-tts", json={"text": "안내"}).status_code, 403)
+            self.assertEqual(self.client.post("/api/transport-tts", json={"text": "안내"},
+                                              headers={"Origin": "http://other.invalid"}).status_code, 403)
+            for payload in ({"text": " \n "}, {"text": "가" * (speech.MAX_CHARS + 1)}, {"text": 3}, []):
+                with self.subTest(payload=str(payload)[:20]):
+                    self.assertEqual(self.client.post("/api/transport-tts", json=payload).status_code, 400)
+            body = json.dumps({"text": "가상 안내"}).encode().ljust(4096)
+            self.assertEqual(self.client.post("/api/transport-tts", content=body).status_code, 200)
+            self.assertEqual(self.client.post("/api/transport-tts", content=iter((body, b" "))).status_code, 413)
+            render.assert_called_once_with("가상 안내")
+            with speech._lock:
+                response = self.client.post("/api/transport-tts", json={"text": "다른 문장"})
+                self.assertEqual((response.status_code, response.headers["retry-after"]), (503, "1"))
+        with patch.object(speech, "synthesize", side_effect=speech.SpeechUnavailable()):
+            self.assertEqual(self.client.post("/api/transport-tts", json={"text": "안내"}).status_code, 503)
+
+    def test_neural_audio_requires_both_settings_and_cannot_be_reused_offline(self):
+        import settings
+        speech = self.ui.tts_audio
+        phrase = "가상 안내"
+        with patch.dict(speech._cache, clear=True), \
+                patch.object(speech, "_render", return_value=b"wave") as offline, \
+                patch.object(speech, "_render_neural", return_value=b"mp3") as online:
+            configs = [
+                ("development", "1", "neural", True), ("development", "0", "neural", False),
+                ("development", "1", "", False), ("development", "1", "local", False),
+                ("test", "1", "neural", False), ("development", "1", "neural", True),
+            ]
+            for mode, allowed, voice, enabled in configs:
+                with self.subTest(mode=mode, allowed=allowed, voice=voice), \
+                        patch.object(settings, "APP_ENV", mode), \
+                        patch.dict(os.environ, QUICK119_EXTERNAL_API=allowed, QUICK119_TTS_VOICE=voice):
+                    self.assertIs(speech.neural_enabled(), enabled)
+                    expected = (b"mp3", "audio/mpeg") if enabled else (b"wave", "audio/wav")
+                    self.assertEqual(speech.synthesize(phrase), expected)
+            online.assert_called_once_with(phrase)
+            offline.assert_called_once_with(phrase)
+
+
 class LiveTeamChat(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

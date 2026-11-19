@@ -1,10 +1,13 @@
 """Local synthetic workspace and a non-persistent adapter for the repository's hospital UI."""
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from fastapi.templating import Jinja2Templates
 
+import tts_audio
 from team_chat_gateway import _base_url
 
 ROOT = Path(__file__).resolve().parent
@@ -31,7 +34,34 @@ def local_only(request):
 def workspace(request: Request):
     local_only(request)
     return templates.TemplateResponse(request=request, name='transport.html', context={
-        'active_nav': 'transport', 'app_env': 'test', 'chat_ui_enabled': True})
+        'active_nav': 'transport', 'app_env': 'test', 'chat_ui_enabled': True,
+        'tts_cloud': tts_audio.neural_enabled()})
+
+
+@router.post('/api/transport-tts', include_in_schema=False)
+async def transport_speech(request: Request):
+    """Render a system message as Korean audio for the transport chat."""
+    local_only(request)
+    origin = request.headers.get('origin')
+    if (request.headers.get('sec-fetch-site') == 'cross-site'
+            or (origin and origin != f'{request.url.scheme}://{request.url.netloc}')):
+        raise HTTPException(403, '다른 출처의 낭독 요청은 허용하지 않습니다.')
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > 4096:
+            raise HTTPException(413, '낭독할 문장이 너무 깁니다.')
+        body.extend(chunk)
+    try:
+        payload = json.loads(body)
+        text = payload.get('text') if isinstance(payload, dict) else None
+        audio, media_type = await run_in_threadpool(tts_audio.synthesize, text)
+    except (ValueError, UnicodeError, RecursionError):
+        raise HTTPException(400, '낭독할 문장을 확인하세요.') from None
+    except tts_audio.SpeechBusy:
+        raise HTTPException(503, '다른 문장을 읽고 있습니다.', headers={'Retry-After': '1'}) from None
+    except tts_audio.SpeechUnavailable:
+        raise HTTPException(503, 'PC의 한국어 음성을 사용할 수 없습니다.') from None
+    return Response(audio, media_type=media_type, headers={'Cache-Control': 'no-store'})
 
 
 @router.get('/hospital/', include_in_schema=False)

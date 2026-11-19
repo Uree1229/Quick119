@@ -1,4 +1,4 @@
-param([int]$Port = 18034, [int]$TeamPort = 18033, [switch]$SyntheticRoutes)
+param([int]$Port = 18034, [int]$TeamPort = 18033, [switch]$SyntheticRoutes, [switch]$EnableCloudSpeech)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 if ($Port -lt 1 -or $Port -gt 65535 -or $TeamPort -lt 1 -or $TeamPort -gt 65535 -or $Port -eq $TeamPort) {
@@ -20,6 +20,10 @@ $startInfo.EnvironmentVariables['PYTHONDONTWRITEBYTECODE'] = '1'
 $startInfo.EnvironmentVariables['QUICK119_ENV'] = 'development'
 $startInfo.EnvironmentVariables['QUICK119_LOAD_ENV'] = '0'
 $startInfo.EnvironmentVariables['QUICK119_EXTERNAL_API'] = '0'
+if ($EnableCloudSpeech) {
+    $startInfo.EnvironmentVariables['QUICK119_EXTERNAL_API'] = '1'
+    $startInfo.EnvironmentVariables['QUICK119_TTS_VOICE'] = 'neural'
+}
 $startInfo.EnvironmentVariables['QUICK119_DB_PATH'] = Join-Path $projectRoot '.local/team-chat/quick119-synthetic.db'
 $startInfo.EnvironmentVariables['QUICK119_TEAM_CHAT_ENABLED'] = '1'
 $startInfo.EnvironmentVariables['QUICK119_TEAM_CHAT_URL'] = 'http://127.0.0.1:' + $TeamPort

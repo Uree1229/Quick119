@@ -74,12 +74,6 @@
       // The receipt is already in the chat. Keep recognition warnings beside the controls.
       const inChat = result.system_items?.find(item => item.type === 'crew_intake_reply');
       feedback([inChat ? '' : result.feedback, ...lastHints].filter(Boolean).join('\n'));
-      if (current && ['review','repeat_question','missing'].includes(result.action) &&
-          window.speechSynthesis && window.SpeechSynthesisUtterance) {
-        window.speechSynthesis.cancel();
-        const reading = new SpeechSynthesisUtterance(inChat?.data.reply || result.feedback);
-        reading.lang = 'ko-KR'; window.speechSynthesis.speak(reading);
-      }
       followup = current && ['missing','repeat_question'].includes(result.action) ? draft?.followup?.next_question : null;
       answering = null;
       $('answer').hidden = !followup;
