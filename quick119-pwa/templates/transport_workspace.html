@@ -1,5 +1,5 @@
 <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-<link rel="stylesheet" href="/static/transport-workspace.css?v=13">
+<link rel="stylesheet" href="/static/transport-workspace.css?v=14">
 <section id="transport-workspace" class="tw" aria-label="접수 채팅과 이송 지원" data-view="chat" data-stage="report" data-connection="pending" data-voice="idle" data-tts-cloud="{{ 'enabled' if tts_cloud else 'disabled' }}">
   <header class="tw-head">
     <div class="tw-head-row">
@@ -131,11 +131,14 @@
   </div>
 
   <dialog id="transport-command-panel" class="transport-review tw-command" aria-labelledby="transport-command-title">
-    <header class="transport-review-header"><h3 id="transport-command-title">환자정보 확인</h3></header>
+    <header class="transport-review-header">
+      <span class="tw-review-icon" aria-hidden="true"><span class="tw-i tw-i--patient"></span></span>
+      <h3 id="transport-command-title">환자정보 확인</h3>
+    </header>
     <div class="transport-review-body">
-      <p id="transport-command-summary"></p>
-      <dl id="transport-command-fields" class="transport-review-grid tw-facts"></dl>
-      <p id="transport-command-warnings" role="status"></p>
+      <section class="tw-review-section"><h4>추출한 환자 정보</h4><dl id="transport-command-fields" class="transport-review-grid tw-facts"></dl></section>
+      <section class="tw-review-section"><h4>보고 원문</h4><div id="transport-command-reports" class="transport-review-reports"></div></section>
+      <p id="transport-command-warnings" class="transport-review-error" role="status"></p>
     </div>
     <footer class="tw-dialog-actions">
       <button type="button" id="transport-command-close" class="tw-btn tw-btn-ghost">채팅으로</button>
@@ -173,5 +176,5 @@
 <script defer src="/static/chat-voice.js?v=7"></script>
 <script defer src="/static/voice-intake.js"></script>
 <script defer src="/static/patient-review.js?v=9"></script>
-<script defer src="/static/intake-commands.js?v=5"></script>
-<script defer src="/static/hospital-chat.js?v=21"></script>
+<script defer src="/static/intake-commands.js?v=6"></script>
+<script defer src="/static/hospital-chat.js?v=23"></script>
