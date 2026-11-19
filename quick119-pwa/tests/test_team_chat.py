@@ -577,8 +577,9 @@ class LiveTeamChat(unittest.TestCase):
         self.assertEqual(after_request['adjustment_note'], '가상 병상 점검')
         self.assertEqual(after_request['destination_hospital_id'], 'H01')
 
+        wait(staff, f"document.querySelector('{actions}arrive]:enabled')?.checkVisibility()")
         evaluate(staff, f"document.querySelector('{actions}arrive]').click()")
-        wait(staff, f"document.querySelector('{actions}discharge]')?.checkVisibility()")
+        wait(staff, f"document.querySelector('{actions}discharge]:enabled')?.checkVisibility()")
         self.assertEqual(self.call('GET', path)['state'], 'ARRIVED')
         wait(mobile, "document.getElementById('transport-workspace').dataset.stage === 'closed'")
         self.assertTrue(evaluate(mobile, "document.getElementById('transport-depart').hidden"))
