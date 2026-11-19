@@ -115,6 +115,12 @@
       if (!response.ok) throw new Error(`서버 응답 ${response.status}`);
       const data = await response.json();
       if (!Array.isArray(data.patients)) throw new Error('접수 목록 응답 형식이 올바르지 않습니다.');
+      if (data.patients.some(patient =>
+        !Number.isSafeInteger(patient?.case_number) ||
+        typeof patient?.deletable !== 'boolean' ||
+        typeof patient?.delete_block_reason !== 'string')) {
+        throw new Error('환자 목록 서버 버전이 맞지 않습니다. case_number/deletable 필드를 제공하는 최신 공통 서버를 재시작한 뒤 다시 시도하세요.');
+      }
       if (!data.patients.length) {
         addText(list, 'p', 'transport-patient-empty', '아직 접수된 환자가 없습니다. 새 접수를 시작하면 환자별 채팅이 여기에 저장됩니다.');
       } else {

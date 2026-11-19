@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 from urllib.request import urlopen
 
-from server import db, service, synthetic, team_runtime, team_runtime_profile
+from server import db, service, synthetic, team_runtime, team_runtime_profile, transporter_registry
 from server import voice_input as voice
 
 
@@ -107,6 +107,40 @@ class TeamRuntimeTests(unittest.TestCase):
         self.assertTrue(prepared['reused'])
         self.assertEqual(before, self.business())
         self.assertEqual(team_runtime.inspect_database(self.path, now=NOW+7200)['resources']['stale_count'], 20)
+
+    def test_prepare_reuse_migrates_legacy_transport_cases_without_losing_records(self):
+        team_runtime.prepare_database(self.path, now=NOW)
+        conn = db.connect(str(self.path))
+        ids = ('Q119-TEST-LEGACY-1', 'Q119-TEST-LEGACY-2')
+        try:
+            for offset, patient_id in enumerate(ids, start=1):
+                service.create_patient(conn, NOW+offset, patient_id, dict(
+                    reporter_role='transporter', consent=True, age=30+offset,
+                    symptoms='synthetic legacy case', extra={'synthetic': True}))
+            conn.execute('DROP INDEX transporter_case_number_unique')
+            conn.execute('ALTER TABLE patients DROP COLUMN case_number')
+            conn.execute('DROP TABLE transport_case_sequence')
+        finally:
+            conn.close()
+
+        before = self.business()
+        prepared = team_runtime.prepare_database(self.path, now=NOW+10)
+        self.assertTrue(prepared['reused'])
+        self.assertEqual(len(before['patients']), 2)
+        with closing(db.connect(str(self.path))) as conn:
+            cases = transporter_registry.cases(conn)
+            self.assertEqual({item['id']: item['case_number'] for item in cases},
+                             {ids[0]: 1, ids[1]: 2})
+            self.assertTrue(all(isinstance(item['deletable'], bool) and
+                                isinstance(item['delete_block_reason'], str) for item in cases))
+            records = [tuple(row) for row in conn.execute(
+                "SELECT id,age,symptoms,state FROM patients ORDER BY requested_at")]
+            self.assertEqual(records, [(ids[0], 31, 'synthetic legacy case', 'WAITING'),
+                                       (ids[1], 32, 'synthetic legacy case', 'WAITING')])
+        self.assertTrue(team_runtime.prepare_database(self.path, now=NOW+11)['reused'])
+        with closing(db.connect(str(self.path))) as conn:
+            self.assertEqual([(row['id'], row['case_number']) for row in transporter_registry.cases(conn)],
+                             [(ids[1], 2), (ids[0], 1)])
 
     def test_unknown_sqlite_is_rejected_without_schema_or_content_changes(self):
         with closing(sqlite3.connect(self.path)) as conn, conn:
