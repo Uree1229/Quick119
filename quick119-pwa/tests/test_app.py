@@ -92,8 +92,12 @@ class Quick119Tests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("퀵119", response.text)
         self.assertIn("응급상황 접수 시작", response.text)
-        for target in ["/emergency?step=patient", "/patients", "/emergency/hospitals"]:
+        for target in ["/transport/", "/patients", "/emergency/hospitals"]:
             self.assertIn(f'href="{target}"', response.text)
+        self.assertIn('href="/transport/"', response.text)
+        self.assertIn("<span>채팅</span>", response.text)
+        self.assertNotIn("로컬 전용", response.text)
+        self.assertNotIn("개발·테스트 환경", response.text)
         self.assertIn('aria-current="page"', response.text)
         self.assertNotIn('class="med-header"', response.text)
 
@@ -101,37 +105,31 @@ class Quick119Tests(unittest.TestCase):
         response = self.client.get("/")
         self.assertNotIn('href="/voice-intake"', response.text)
         self.assertNotIn('음성 문진', response.text)
-        self.assertIn('class="emergency-cta" href="/emergency?step=patient"', response.text)
+        self.assertIn('class="emergency-cta" href="/transport/"', response.text)
 
     def test_empty_patient_selection(self):
-        response = self.client.get("/emergency?step=patient")
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("아직 등록된 환자가 없습니다", response.text)
-        self.assertIn('href="/register"', response.text)
-        self.assertIn('href="/emergency/check?patient_id=0"', response.text)
-        self.assertNotIn('href="/transport/"', response.text)
+        response = self.client.get("/emergency?step=patient", follow_redirects=False)
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/transport/")
 
     def test_registered_selection_and_escaping(self):
-        patient_id = self.register('<script>alert("synthetic")</script>')
-        response = self.client.get("/emergency?step=patient")
-        self.assertIn(f'<option value="{patient_id}">', response.text)
-        self.assertIn("&lt;script&gt;", response.text)
-        self.assertNotIn('<script>alert("synthetic")', response.text)
-        self.assertIn('action="/emergency/check" method="get"', response.text)
+        self.register('<script>alert("synthetic")</script>')
+        response = self.client.get("/emergency?step=patient", follow_redirects=False)
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/transport/")
 
-    def test_emergency_and_old_voice_bookmark_fallback(self):
+    def test_emergency_and_old_voice_bookmarks_always_open_chat(self):
         response = self.client.get("/emergency", follow_redirects=False)
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("등록 환자 접수", response.text)
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/transport/")
         voice = self.client.get('/voice-intake', follow_redirects=False)
         self.assertEqual(voice.status_code, 303)
-        self.assertEqual(voice.headers['location'], '/emergency?step=patient')
+        self.assertEqual(voice.headers['location'], '/transport/')
         selection = self.client.get("/emergency?step=patient", follow_redirects=False)
-        self.assertEqual(selection.status_code, 200)
-        self.assertIn("등록 환자 접수", selection.text)
-        self.assertIn("미등록 환자 접수", selection.text)
+        self.assertEqual(selection.status_code, 303)
+        self.assertEqual(selection.headers["location"], "/transport/")
 
-    def test_chat_entry_matches_client_and_configuration(self):
+    def test_chat_navigation_is_consistent_when_server_is_unavailable_or_request_is_remote(self):
         from fastapi.testclient import TestClient
         for host, enabled, status in [
             ("127.0.0.1", "1", 200), ("::1", "1", 200),
@@ -140,12 +138,22 @@ class Quick119Tests(unittest.TestCase):
             with self.subTest(host=host, enabled=enabled), patch.dict(
                 os.environ, QUICK119_TEAM_CHAT_ENABLED=enabled, QUICK119_TEAM_CHAT_URL="http://127.0.0.1:18033"
             ), TestClient(self.main.app, client=(host, 51000)) as client:
-                self.assertEqual(client.get("/transport/").status_code, status)
+                unavailable = client.get("/transport/")
+                self.assertEqual(unavailable.status_code, status)
+                if status != 200:
+                    self.assertIn("detail", unavailable.json())
+                if status != 200:
+                    self.assertNotEqual(client.get("/transport/").status_code, 200)
                 for page in ("/", "/emergency?step=patient", "/pwa-check", "/patients"):
-                    self.assertEqual('href="/transport/"' in client.get(page).text, status == 200, page)
-                destination = "/transport/" if status == 200 else "/emergency?step=patient"
-                self.assertIn(f'class="emergency-cta" href="{destination}"', client.get("/").text)
-                self.assertEqual(client.get(destination).status_code, 200)
+                    response = client.get(page, follow_redirects=False)
+                    if page == "/emergency?step=patient":
+                        self.assertEqual((response.status_code, response.headers["location"]),
+                                         (303, "/transport/"))
+                    else:
+                        self.assertEqual(response.status_code, 200, page)
+                        self.assertIn('href="/transport/"', response.text, page)
+                        self.assertNotIn("로컬 전용", response.text, page)
+                self.assertIn('class="emergency-cta" href="/transport/"', client.get("/").text)
 
     def test_javascript_mime_with_nosniff(self):
         response = self.client.get("/static/hospital-chat.js")
@@ -696,7 +704,7 @@ class Quick119Tests(unittest.TestCase):
             self.assertEqual(struct.unpack(">II", png.content[16:24]), tuple(map(int, icon["sizes"].split("x"))))
 
     def test_pwa_resources_on_new_and_legacy_pages(self):
-        for url in ["/", "/emergency?step=patient", "/register", "/patients", "/emergency/check", "/pwa-check"]:
+        for url in ["/", "/register", "/patients", "/emergency/check", "/pwa-check"]:
             with self.subTest(url=url):
                 html = self.client.get(url).text
                 self.assertEqual(html.count('rel="manifest"'), 1)
@@ -730,12 +738,12 @@ class Quick119Tests(unittest.TestCase):
         self.assertNotIn('class="med-header"', offline.text)
         self.assertIn('href="tel:119"', offline.text)
 
-    def test_permission_checks_and_manual_fallback(self):
+    def test_permission_checks_and_chat_entry(self):
         response = self.client.get("/pwa-check")
         self.assertEqual(response.status_code, 200)
         for name in ["check-mic", "check-gps", "check-secure", "check-display"]:
             self.assertIn(f'id="{name}"', response.text)
-        self.assertNotIn('href="/transport/"', response.text)
+        self.assertIn('href="/transport/"', response.text)
         voice = Path("static/chat-voice.js").read_text(encoding="utf-8")
         self.assertIn("window.isSecureContext", voice)
         self.assertIn("메시지를 직접 입력해 주세요.", voice)
