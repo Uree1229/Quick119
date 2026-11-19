@@ -267,15 +267,19 @@ test('accepted reassignment uses the top inquiry tray and hospital card, then ch
     order_key: [10, 0, 10]});
   await settle();
   assert.equal(h.$('workspace').dataset.reassignmentActive, 'true');
-  const noticeGroup = h.document.getElementById('transport-notices-event:7');
-  assert.ok(noticeGroup, 'consecutive system events share one progress card');
+  const departureBand = h.document.getElementById('transport-notices-event:7');
+  assert.equal(departureBand.children[0].textContent, '기존 병원으로 출발했습니다.',
+    'an earlier band keeps describing its own event');
+  const noticeGroup = h.document.getElementById('transport-notices-event:8');
+  assert.ok(noticeGroup, 'the adjustment starts its own band');
   assert.equal(noticeGroup.dataset.emphasis, 'decision');
-  assert.equal(noticeGroup.children[1].textContent, '수용 가능한 대체병원 확보 · 새 목적지를 확정하세요',
-    'accepted replacement state takes precedence over an earlier departure notice');
-  assert.match(noticeGroup.children[2].textContent, /조정 사유: 현재 병상 부족/);
-  assert.equal(noticeGroup.children[3].children[0].textContent, '자세히 2건');
+  assert.equal(noticeGroup.children[0].textContent, '수용 가능한 대체병원 확보 · 새 목적지를 확정하세요',
+    'only the newest band carries the live confirmation prompt');
+  assert.equal(noticeGroup.children[1].textContent, '사유: 현재 병상 부족');
+  assert.ok(!h.$('messages').children.flatMap(node => node.children || []).some(node => /자세히/.test(node.textContent || '')),
+    'bands are single lines; the full trail stays in the progress log');
   assert.ok(!JSON.stringify(noticeGroup.children.map(node => node.dataset)).includes('transportConfirm'),
-    'the progress card has no isolated confirmation action');
+    'the notice band has no isolated confirmation action');
   const card = h.document.getElementById('transport-cand-H02');
   assert.ok(card, 'the accepted alternative appears as a hospital card');
   const descendants = node => [node, ...(node.children || []).flatMap(descendants)];
@@ -291,7 +295,6 @@ test('accepted reassignment uses the top inquiry tray and hospital card, then ch
     'the current destination is not shown as a reassignment candidate');
   assert.equal(h.$('current-destination').hidden, false);
   assert.equal(h.$('current-destination').children[1].children[1].textContent, '기존 병원');
-  noticeGroup.details.open = true;
 
   await confirmButton.emit('click');
   await h.poll();
@@ -302,9 +305,11 @@ test('accepted reassignment uses the top inquiry tray and hospital card, then ch
   assert.equal(h.state.session.hospital_id, 'H02');
   assert.equal(h.$('workspace').dataset.reassignmentActive, 'false', 'resolved reassignment folds the tray');
   assert.equal(h.$('current-destination').hidden, true);
-  assert.equal(h.document.getElementById('transport-notices-event:7'), noticeGroup, 'the progress card updates in place');
-  assert.equal(noticeGroup.details.open, true, 'an expanded timeline remains expanded when it updates');
-  assert.match(noticeGroup.children[1].textContent, /목적지가 변경/);
+  assert.equal(h.document.getElementById('transport-notices-event:8'), noticeGroup, 'the adjustment band updates in place');
+  assert.equal(noticeGroup.children[0].textContent, '기존 병원에서 조정을 요청했습니다.',
+    'once resolved, the adjustment band no longer asks for a confirmation');
+  const changedBand = h.document.getElementById('transport-notices-event:12');
+  assert.match(changedBand.children[0].textContent, /목적지가 변경/, 'the new destination gets its own band');
 });
 
 test('TTS asks the opening question and reads the intake reply once, not the receipt or draft summary', async () => {

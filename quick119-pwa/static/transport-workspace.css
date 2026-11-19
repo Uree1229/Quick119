@@ -137,11 +137,13 @@
 #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiries{
   flex:1 1 0;min-width:0;min-height:44px;padding:0;border:0;overflow-x:auto
 }
-#transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiries:has(.tw-btn-confirm){
-  flex-wrap:wrap;max-height:40%;overflow-x:hidden;overflow-y:auto
-}
 #transport-workspace .tw-current-destination{display:flex;flex:0 1 138px;align-items:center;gap:7px;min-width:0;padding:6px 8px;border:1px solid #bcd0e8;border-radius:12px;background:var(--tw-navy-soft)}
 #transport-workspace .tw-current-destination[hidden]{display:none}
+/* During an adjustment the current destination is the first chip of the same sliding tray as the first selection. */
+#transport-workspace .tw-inquiries .tw-current-destination{flex:0 0 auto;width:auto;max-width:min(128px,34vw);min-height:44px;padding:0 10px 0 8px;scroll-snap-align:start}
+#transport-workspace .tw-inquiries .tw-current-destination-copy strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
+/* The chip to confirm stays fully visible beside the current destination; its hospital name ellipsizes instead. */
+#transport-workspace[data-reassignment-active=true] .tw-inquiries .transport-inquiry:has(.tw-btn-confirm){max-width:calc(100% - min(128px,34vw) - 6px)}
 .tw-current-destination .tw-inquiry-icon{width:20px;height:20px}
 .tw-current-destination-copy{display:flex;min-width:0;flex-direction:column;line-height:1.25}
 .tw-current-destination-copy span{color:var(--tw-muted);font-size:10px;font-weight:800;white-space:nowrap}
@@ -231,22 +233,14 @@
 .transport-message[data-kind=notice] .transport-bubble{display:inline;max-width:none;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:inherit;font-size:12px;font-weight:700;line-height:1.45}
 .transport-message[data-kind=notice] .transport-time{display:inline;margin:0 0 0 6px;font-weight:600}
 /* Consecutive system events become one expandable progress card; their original text remains available inside. */
-.tw-system-group{align-self:center;width:min(100%,520px);margin-top:10px;padding:10px 12px;border:1px solid #d5e0ec;border-radius:14px;background:#f3f6fa;color:#344a61}
-.tw-system-group[data-emphasis=adjustment]{border-color:#e7c98f;background:#fff9ed}
-.tw-system-group[data-emphasis=decision]{border-color:#9fcab2;background:#f0faf4}
-.tw-system-group[data-emphasis=attention]{border-color:#e6c1a0;background:#fff5ee}
-.tw-system-group-title{display:flex;align-items:center;gap:6px;margin-bottom:3px;color:#52677e;font-size:10.5px;font-weight:900;letter-spacing:.02em}
-.tw-system-group-title::before{content:"";width:7px;height:7px;border-radius:50%;background:#73869b}
-.tw-system-group[data-emphasis=adjustment] .tw-system-group-title::before{background:#b97812}
-.tw-system-group[data-emphasis=decision] .tw-system-group-title::before{background:#18834e}
-.tw-system-group[data-emphasis=attention] .tw-system-group-title::before{background:#bc5b24}
-.tw-system-group-headline{margin:0!important;color:var(--tw-ink);font-size:13px;font-weight:800;line-height:1.45;overflow-wrap:anywhere}
-.tw-system-group-reason{margin:4px 0 0!important;color:#684c1d;font-size:12px;line-height:1.4;overflow-wrap:anywhere}
-.tw-system-group-details{margin-top:4px}
-.tw-system-group-details summary{display:flex;align-items:center;min-height:32px;color:#52677e;font-size:11.5px;font-weight:800;cursor:pointer}
-.tw-system-group-events{margin:0;padding:0 0 0 17px;color:#41566d;font-size:11.5px;line-height:1.45}
-.tw-system-group-events li{padding:2px 0;overflow-wrap:anywhere}
-.tw-system-group-events time{margin-left:6px;color:#718197;font-size:10.5px;white-space:nowrap}
+.tw-system-group{position:relative;display:flex;flex-wrap:wrap;align-items:baseline;justify-content:center;column-gap:6px;align-self:center;max-width:100%;margin-top:10px;padding:5px 11px;border-radius:12px;background:#e9eff6;color:#3f546c;text-align:center}
+.tw-system-group[data-emphasis=adjustment]{background:#fff1d6;color:#7a5410}
+.tw-system-group[data-emphasis=decision]{background:#dff3e7;color:#17613b}
+.tw-system-group[data-emphasis=attention]{background:#fde9dc;color:#8a4316}
+.tw-system-group-headline{margin:0!important;color:inherit;font-size:12px;font-weight:700;line-height:1.45;overflow-wrap:anywhere}
+.tw-system-group-reason{margin:0!important;color:inherit;font-size:12px;font-weight:600;line-height:1.45;overflow-wrap:anywhere}
+.tw-system-group-reason::before{content:"·";margin-right:6px}
+.tw-system-group .transport-time{display:inline;margin:0;color:inherit;opacity:.75;font-size:11px;font-weight:600}
 .tw-jump{position:absolute;left:50%;bottom:18px;z-index:3;display:inline-flex;align-items:center;gap:6px;height:44px;padding:0 16px;border:0;border-radius:20px;background:var(--tw-navy);color:#fff;font-size:13px;font-weight:800;box-shadow:0 8px 20px #17375e47;transform:translateX(-50%)}
 .tw-jump::before{content:"";width:16px;height:16px;background:currentColor;-webkit-mask:var(--i-down) center/contain no-repeat;mask:var(--i-down) center/contain no-repeat}
 
@@ -563,15 +557,6 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
   #transport-workspace:not([data-stage=joined]) .tw-head-actions{gap:6px}
   #transport-workspace:not([data-stage=joined]) .tw-title{font-size:16px}
   #transport-workspace:not([data-stage=joined]) .tw-switch{padding:0 12px 0 10px}
-  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-assignment-strip{flex-direction:column;gap:6px;padding:6px 10px}
-  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-current-destination{flex:0 0 auto;width:100%;min-height:42px;padding:6px 9px}
-  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiries{flex:0 0 auto;width:100%;padding:0}
-  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiries:has(.tw-btn-confirm){flex-wrap:wrap;max-height:none;overflow:visible}
-  #transport-workspace[data-stage=joined][data-reassignment-active=true] .transport-inquiry{flex:1 1 100%;max-width:none;gap:8px;padding:0 8px}
-  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiry-copy{flex-direction:row;align-items:center;gap:6px}
-  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiry-copy strong{flex:1;white-space:normal;overflow-wrap:anywhere}
-  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiry-copy .tw-pill{flex:none;padding:0 6px;font-size:10.5px}
-  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-btn-confirm{max-width:44px;padding:0;font-size:0;white-space:nowrap}
 }
 @media(max-width:374px){
   .tw-head-row{padding:8px 10px 4px 12px;gap:6px}

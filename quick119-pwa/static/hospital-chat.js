@@ -473,8 +473,9 @@
     if (updates.length > shown.length) shown.push(`외 ${updates.length - shown.length}곳`);
     return `${group.some(item => adjustmentStartTypes.has(item.type)) ? '대체병원 문의' : '병원 문의'}: ${shown.join(' · ')}`;
   }
-  function noticeHeadline(group) {
-    const activeAdjustmentStart = latestOpenAdjustmentStart();
+  // Each band describes its own events; only the newest band may carry the live "confirm now" prompt.
+  function noticeHeadline(group, isLatest) {
+    const activeAdjustmentStart = isLatest ? latestOpenAdjustmentStart() : 0;
     if (activeAdjustmentStart) {
       const hasCandidate = (snapshot?.inquiries || []).some(isAlternativeAcceptance);
       if (hasCandidate) return '수용 가능한 대체병원 확보 · 새 목적지를 확정하세요';
@@ -492,57 +493,43 @@
       }
       return group[group.length - 1].text;
     }
+    const lastOf = type => [...group].reverse().find(item => item.type === type);
     const outcomes = group.filter(item => outcomeTypes.has(item.type));
     if (outcomes.length) return outcomes[outcomes.length - 1].text;
-    if (group.some(item => item.type === 'transport_inquiry_ready')) {
-      return '수용 가능한 대체병원 확보 · 새 목적지를 확정하세요';
-    }
-    if (group.some(item => item.type === 'transport_inquiry_exhausted')) {
-      return group[group.length - 1].text;
-    }
+    if (lastOf('transport_inquiry_ready')) return lastOf('transport_inquiry_ready').text || '대체병원의 수용 응답을 확보했습니다.';
+    if (lastOf('transport_inquiry_exhausted')) return lastOf('transport_inquiry_exhausted').text;
+    const start = group.find(item => adjustmentStartTypes.has(item.type));
+    if (start) return start.text;
     if (group.some(item => inquiryNoticeTypes.has(item.type))) return inquirySummary(group);
     return group[group.length - 1].text;
   }
-  function noticeEmphasis(group) {
-    if (group.some(item => outcomeTypes.has(item.type) || item.type === 'transport_inquiry_ready')) return 'decision';
+  function noticeEmphasis(group, prompt) {
+    if (prompt || group.some(item => outcomeTypes.has(item.type) || item.type === 'transport_inquiry_ready')) return 'decision';
     if (group.some(item => adjustmentStartTypes.has(item.type))) return 'adjustment';
     if (group.some(item => item.type === 'transport_recheck_required')) return 'attention';
     return 'progress';
   }
-  function renderNoticeGroup(group) {
+  // A run of system events is one thin centred band, like single notices; the full trail lives in 진행 기록.
+  function renderNoticeGroup(group, isLatest) {
     const nodeId = 'transport-notices-' + group[0].id;
-    const headlineText = noticeHeadline(group);
+    const headlineText = noticeHeadline(group, isLatest);
+    const prompt = headlineText.endsWith('새 목적지를 확정하세요');
     const reasonNotice = [...group].reverse().find(item => item.type === 'adjustment_needed');
     const reason = typeof reasonNotice?.data?.note === 'string' ? reasonNotice.data.note.trim() : '';
+    const last = group[group.length - 1];
     const signature = JSON.stringify([group.map(item => [item.id, item.text, item.type]), headlineText, reason]);
     let node = document.getElementById(nodeId);
     if (!node) {
-      node = el('article', 'tw-system-group');
+      node = el('div', 'tw-system-group');
       node.id = nodeId;
       node.dataset.kind = 'notice-group';
     } else if (node.dataset.signature === signature) return node;
-    const wasOpen = !!node.details?.open;
     node.dataset.signature = signature;
-    const headline = el('p', 'tw-system-group-headline', headlineText);
-    const heading = el('strong', 'tw-system-group-label', '진행 상황');
-    const headingRow = el('div', 'tw-system-group-title');
-    headingRow.append(heading);
-    const children = [headingRow, headline];
-    if (reason) children.push(el('p', 'tw-system-group-reason', `조정 사유: ${reason}`));
-    const details = el('details', 'tw-system-group-details');
-    details.open = wasOpen;
-    const summary = el('summary', '', `자세히 ${group.length}건`);
-    const list = el('ol', 'tw-system-group-events');
-    for (const item of group) {
-      const row = el('li', '', item.text || '');
-      if (item.at) row.append(el('time', '', clock(item.at)));
-      list.append(row);
-    }
-    details.append(summary, list);
-    children.push(details);
-    node.dataset.emphasis = noticeEmphasis(group);
+    const children = [el('p', 'tw-system-group-headline', headlineText)];
+    if (reason) children.push(el('p', 'tw-system-group-reason', `사유: ${reason}`));
+    if (last?.at) children.push(el('small', 'transport-time', clock(last.at)));
+    node.dataset.emphasis = noticeEmphasis(group, prompt);
     node.replaceChildren(...children);
-    node.details = details;
     return node;
   }
   function progressLogEvents() {
@@ -614,6 +601,9 @@
             index++; continue;
           }
           if (!isSystemNotice(ordered[index])) break;
+          // A new adjustment or a new destination starts its own band, so earlier outcomes keep their own line.
+          if (group.length && (adjustmentStartTypes.has(ordered[index].type)
+            || ['destination_confirmed', 'destination_changed', 'hospital_keeps', 'patient_cancelled'].includes(ordered[index].type))) break;
           group.push(ordered[index++]);
         }
         entries.push({key: 'notice:' + group[0].id, group});
@@ -626,9 +616,10 @@
     const kept = renderedEntryKeys.length <= keys.length && renderedEntryKeys.every((key, index) => keys[index] === key)
       ? renderedEntryKeys.length : 0;
     let previous = null;
+    const latestGroup = entries.filter(entry => entry.group).at(-1);
     entries.forEach((entry, index) => {
       const node = entry.group
-        ? renderNoticeGroup(entry.group)
+        ? renderNoticeGroup(entry.group, entry === latestGroup)
         : (document.getElementById('transport-item-' + entry.item.id) || messageNode(entry.item));
       if (entry.item) {
         const group = `${entry.item.sender_role}|${entry.item.sender_name || ''}`;
