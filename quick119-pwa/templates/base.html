@@ -24,7 +24,7 @@
   {% include 'pwa_controls.html' %}
   <nav class="bottom-nav" aria-label="하단 메뉴">
     <a href="/" {% if active_nav == 'home' %}aria-current="page"{% endif %}>{{ icon('home') }}<span>홈</span></a>
-    <a href="/patients">{{ icon('users') }}<span>환자</span></a>
+    <a href="/patients" {% if active_nav == 'patients' %}aria-current="page"{% endif %}>{{ icon('users') }}<span>환자</span></a>
     <a href="/emergency/hospitals">{{ icon('hospital') }}<span>응급실</span></a>
     <a href="/transport/" {% if active_nav == 'transport' %}aria-current="page"{% endif %}>{{ icon('chat') }}<span>채팅</span></a>
   </nav>

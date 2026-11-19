@@ -1,4 +1,4 @@
-"""Start unchanged team CommonRuntime against a dedicated synthetic database."""
+"""Start team CommonRuntime against a dedicated synthetic database."""
 import argparse
 import json
 import os
@@ -65,7 +65,7 @@ def main():
                 with ready.open("x", encoding="utf-8") as file:
                     json.dump(info, file)
             print(json.dumps(info, ensure_ascii=False), flush=True)
-            print("Synthetic chat only; no planner, no automatic inquiry worker, no external APIs. Ctrl+C to stop.", flush=True)
+            print("Synthetic chat only; no planner, automatic hospital inquiries enabled, no external APIs. Ctrl+C to stop.", flush=True)
             while runtime.thread.is_alive():
                 runtime.thread.join(timeout=0.5)
     except KeyboardInterrupt:

@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS restrictions (
 );
 CREATE TABLE IF NOT EXISTS patients (
     id TEXT PRIMARY KEY,
+    case_number INTEGER,
     reporter_role TEXT NOT NULL,               -- self / guardian / transporter
     relation TEXT,
     contact TEXT,
@@ -316,6 +317,7 @@ def init(conn):
     # 기존 시연 DB도 삭제 없이 확장한다. 여러 번 실행해도 데이터는 보존된다.
     columns = {r['name'] for r in conn.execute('PRAGMA table_info(patients)')}
     additions = {
+        'case_number': 'INTEGER',
         'name': 'TEXT', 'birth': 'TEXT', 'address': 'TEXT', 'guardian': 'TEXT',
         'guardian_phone': 'TEXT', 'consciousness': 'TEXT', 'breathing': 'TEXT',
         'treatment_duration_seconds': 'INTEGER', 'max_wait_seconds': 'INTEGER',
@@ -324,6 +326,26 @@ def init(conn):
     for name, definition in additions.items():
         if name not in columns:
             conn.execute(f'ALTER TABLE patients ADD COLUMN {name} {definition}')
+    conn.execute("""CREATE TABLE IF NOT EXISTS transport_case_sequence (
+        id INTEGER PRIMARY KEY CHECK(id=1),
+        next_number INTEGER NOT NULL CHECK(next_number > 0)
+    )""")
+    conn.execute('INSERT OR IGNORE INTO transport_case_sequence(id,next_number) VALUES(1,1)')
+    with transaction(conn):
+        highest = conn.execute(
+            "SELECT COALESCE(MAX(case_number),0) FROM patients "
+            "WHERE reporter_role='transporter' AND id LIKE 'Q119-TEST-%'").fetchone()[0]
+        next_number = max(conn.execute(
+            'SELECT next_number FROM transport_case_sequence WHERE id=1').fetchone()[0], highest + 1)
+        unnumbered = rows(conn.execute(
+            "SELECT id FROM patients WHERE reporter_role='transporter' "
+            "AND id LIKE 'Q119-TEST-%' AND case_number IS NULL ORDER BY requested_at,rowid"))
+        for patient in unnumbered:
+            conn.execute('UPDATE patients SET case_number=? WHERE id=?', (next_number, patient['id']))
+            next_number += 1
+        conn.execute('UPDATE transport_case_sequence SET next_number=? WHERE id=1', (next_number,))
+    conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS transporter_case_number_unique '
+                 'ON patients(case_number) WHERE case_number IS NOT NULL')
     # 대화 이력은 배정 입력이 아니다. 아래 planning 트리거 대상에 넣지 않는다.
     session_columns = {r['name'] for r in conn.execute('PRAGMA table_info(conversation_hospital_sessions)')}
     if 'patient_snapshot' not in session_columns:

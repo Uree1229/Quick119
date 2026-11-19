@@ -11,7 +11,9 @@ const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(reso
 
 function harness({restored = false, hospitalFailure = false, seoul = false, speech = true, tts = true, cloudSpeech = false,
   ttsVoices = [{name: '한국어', lang: 'ko-KR', localService: true, default: true}], audio = false, pcVoice = true,
-  intake = false, intakeEffect = null, viewport = false, embedded = false, conversationPages = []} = {}) {
+  intake = false, intakeEffect = null, viewport = false, embedded = false, conversationPages = [],
+  patientCases = null, patientId = 'Q119-TEST-restored', newCase = !restored, hospitalList = null,
+  storage = new Map()} = {}) {
   const nodes = new Map(), allNodes = new Set(), calls = [], timers = new Map(), speeches = [], utterances = [], audios = [];
   let nextTimer = 0, uuid = 0;
   class Events {
@@ -33,7 +35,7 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
   const ids = ['workspace', 'chat', 'gps', 'sheet', 'sheet-handle', 'message', 'message-label', 'message-form', 'messages',
     'participants', 'depart', 'voice-start', 'voice-stop', 'voice-status', 'voice-interim', 'new-case', 'send',
     'discard', 'review-draft', 'pending', 'connection', 'chat-status',
-    'hospitals', 'voice-panel', 'hospital-contact', 'hospital-status', 'reload-hospitals', 'inquiries', 'error', 'unread', 'toggle', 'toggle-label',
+    'hospitals', 'voice-panel', 'hospital-contact', 'hospital-status', 'reload-hospitals', 'inquiries', 'current-destination', 'error', 'unread', 'toggle', 'toggle-label',
     'title', 'mark-read', 'review-panel', 'patient-info', 'start-search', 'review-close', 'review-close-top', 'review-form', 'search-status',
     'tts-toggle', 'tts-status', 'intake-feedback', 'answer', 'command-panel', 'command-close', 'command-confirm',
     'command-title', 'command-fields', 'command-reports', 'command-warnings'];
@@ -47,7 +49,9 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
   document.createElement = () => new Element();
   document.querySelectorAll = () => [...allNodes].filter(node => node.dataset.transportConfirm || node.dataset.transportInquire);
   const window = new Events(); window.isSecureContext = true;
-  class Utterance { constructor(text) { this.text = text; utterances.push(this); } }
+  window.localStorage = {getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)),
+    removeItem: key => storage.delete(key)};
+  class Utterance { constructor(text) { this.text = text; if (text) utterances.push(this); } }
   const synthesis = Object.assign(new Events(), {voices: ttsVoices, canceled: 0,
     getVoices() { return this.voices; }, speak() {},
     cancel() { this.canceled++; }});
@@ -77,8 +81,11 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
     }
   }
   if (speech) window.SpeechRecognition = Speech;
-  const state = {session: null, failMessageOnce: false, beforeConversation: null, messages: [], inquiries: [], receipts: new Map()};
-  const patientId = 'Q119-TEST-restored';
+  const state = {session: null, failMessageOnce: false, beforeConversation: null, conversationDeleted: false,
+    messages: [], inquiries: [], receipts: new Map()};
+  const listedPatients = patientCases ?? (restored
+    ? [{id: patientId, age: null, stage: '접수 중', active: true, inquiries: []}]
+    : []);
   const welcome = {id: 'event:1', kind: 'system', type: 'patient_created', sender_role: 'system', sender_name: '시스템', at: 1,
     text: '환자 상태를 보고해 주세요.', order_key: [1, 0, 1]};
   function snapshot() {
@@ -95,8 +102,9 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
     if (url === '/api/hospitals') {
       if (seoul) return response([{id:'H01', name:'시연 대상 병원', source:'synthetic', source_ids:{identity_source:'seoul_public'}}]);
       if (hospitalFailure) throw new Error('hospital list offline');
-      return response([{id: 'H01', name: '가상 병원 H01', source: 'synthetic', lat: 35.1, lon: 126.8}]);
+      return response(hospitalList || [{id: 'H01', name: '가상 병원 H01', source: 'synthetic', lat: 35.1, lon: 126.8}]);
     }
+    if (url === '/api/transport/patients') return response({patients: listedPatients});
     if (url === '/api/patients') return response(body);
     if (url === '/api/transport-tts') {
       const available = Array.isArray(pcVoice) ? pcVoice.shift() : pcVoice;
@@ -112,7 +120,11 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
         system_items: [{id: 'event:9', kind: 'system', type: 'crew_intake_reply', sender_role: 'system', sender_name: '시스템',
           at: 5, text: '', data: {reply: '나이: 10세', command_text: body.text}, order_key: [5, 0, 9]}]});
     }
-    if (url.includes('/conversation?')) { state.beforeConversation?.(); state.beforeConversation = null; return response({...snapshot(), ...conversationPages.shift()}); }
+    if (url.includes('/conversation?')) {
+      state.beforeConversation?.(); state.beforeConversation = null;
+      if (state.conversationDeleted) return {ok: false, status: 404, json: async () => ({message: '접수 기록이 없습니다.'})};
+      return response({...snapshot(), ...conversationPages.shift()});
+    }
     if (url.endsWith('/messages')) {
       let receipt = state.receipts.get(body.client_message_id);
       if (!receipt) {
@@ -127,10 +139,24 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
       if (state.failMessageOnce) { state.failMessageOnce = false; throw new Error('response lost after save'); }
       return response(receipt);
     }
+    if (url.endsWith('/change-destination')) {
+      const inquiry = state.inquiries.find(item => item.id === body.inquiry_id);
+      if (!inquiry) throw new Error('Unknown destination inquiry');
+      state.session = {id: 8, hospital_id: inquiry.hospital_id, hospital_name: inquiry.hospital_name};
+      state.inquiries = state.inquiries.map(item => item.id === inquiry.id
+        ? {...item, state: 'CONFIRMED', usable: false} : item);
+      state.messages.push({id: 'event:12', kind: 'system', type: 'destination_changed', sender_role: 'system',
+        sender_name: '시스템', at: 12, text: inquiry.hospital_name + '으로 목적지가 변경됐습니다.',
+        order_key: [12, 0, 12]});
+      return response({destination_hospital_id: inquiry.hospital_id});
+    }
     throw new Error('Unexpected HTTP path ' + url);
   }
   function response(body) { return {ok: true, status: 200, json: async () => body}; }
-  const location = {href: 'http://127.0.0.1/transport/' + (restored ? '?pid=' + patientId : ''), search: restored ? '?pid=' + patientId : ''};
+  const search = restored ? '?pid=' + patientId : newCase ? '?new=1' : '';
+  const location = {href: 'http://127.0.0.1/transport/' + search, search};
+  const navigation = [];
+  window.location = {assign: url => navigation.push(url)};
   const context = vm.createContext({window, document, location, history: {replaceState(_state, _title, url) { location.href = url.toString(); location.search = url.search; }},
     fetch, crypto: {randomUUID: () => 'uuid-' + (++uuid)}, console, URL, URLSearchParams, AbortController, Date,
     CustomEvent: class {constructor(type, {detail}) { this.type = type; this.detail = detail; }},
@@ -139,7 +165,7 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
     setTimeout: (fn, ms) => { const id = ++nextTimer; timers.set(id, {fn, ms}); return id; }, clearTimeout: id => timers.delete(id),
   });
   for (const name of ['transport-workspace', 'intake-commands', 'chat-voice', 'patient-review', 'hospital-chat']) vm.runInContext(sources[name], context, {filename: name + '.js'});
-  return {$, state, calls, document, window, speeches, utterances, synthesis, audios,
+  return {$, state, calls, document, window, location, speeches, utterances, synthesis, audios, storage, navigation,
     type: text => { $('message').value = text; $('message').dispatchEvent({type: 'input'}); },
     submit: () => $('message-form').emit('submit'),
     poll: async () => { const entry = [...timers].find(([, timer]) => timer.ms === 3000); assert.ok(entry, 'scheduled poll'); timers.delete(entry[0]); entry[1].fn(); await settle(); },
@@ -162,8 +188,8 @@ test('TTS selects a local Korean voice, reads only new system chat turns, and st
       {name: '로컬 한국어', lang: 'ko-KR', localService: true, default: false},
       {name: '로컬 기본 한국어', lang: 'ko-KR', localService: true, default: true},
     ]});
-  await h.$('tts-toggle').emit('click'); await settle();
-  assert.equal(h.utterances.length, 0, 'history and an answered greeting are not read after enabling');
+  await h.document.emit('pointerdown'); await settle();
+  assert.equal(h.utterances.length, 0, 'history and an answered greeting stay silent by default');
   const next = {id: 'event:3', kind: 'system', type: 'crew_intake_reply', sender_role: 'system',
     text: '', data: {reply: '나이: 10세', command_text: '나이 10세'}, at: 3, order_key: [3, 0, 3]};
   h.state.messages.push(next,
@@ -173,27 +199,166 @@ test('TTS selects a local Korean voice, reads only new system chat turns, and st
     {...next, id: 'hospital:1', kind: 'message', sender_role: 'hospital', type: null, text: '병원 답장'},
     {...next, id: 'event:5', type: 'inquiry_status_changed', text: '상태 변경'},
     {...next, id: 'event:6', type: 'inquiry_workflow_batch', text: '후보 2곳에 문의했습니다.'},
-    {...next, id: 'event:7', type: 'inquiry_responded', text: '가상 병원 H01에서 수용 가능으로 응답했습니다.'});
+    {...next, id: 'event:7', type: 'inquiry_responded', hospital_id: 'H01', hospital_name: '가상 병원 H01',
+      data: {action: 'accept'}, text: '가상 병원 H01에서 수용 가능으로 응답했습니다.'});
   await h.poll();
   assert.deepEqual(h.utterances.map(item => item.text), ['나이: 10세']);
   h.utterances[0].onend(); await settle();
   assert.deepEqual(h.utterances.map(item => item.text), ['나이: 10세', '환자정보가 수정됐습니다.']);
   h.utterances[1].onend(); await settle();
-  assert.deepEqual(h.utterances.map(item => item.text), ['나이: 10세', '환자정보가 수정됐습니다.', '가상 병원 H01에서 수용 가능으로 응답했습니다.'],
+  assert.deepEqual(h.utterances.map(item => item.text), ['나이: 10세', '환자정보가 수정됐습니다.', '병원 회신: 가상 병원 H01 수용 가능'],
     'hospital responses are read; workflow bookkeeping is not');
   assert.equal(h.utterances[0].voice.name, '로컬 기본 한국어');
   assert.equal(h.utterances[0].lang, 'ko-KR'); assert.equal(h.utterances[0].rate, 1.15);
 });
 
+test('TTS announces preserved acceptance candidates during transport reassignment', async () => {
+  const h = harness({restored: true});
+  await settle(); await h.document.emit('pointerdown'); await settle();
+  const notice = {id: 'event:11', kind: 'system', type: 'transport_inquiry_candidates_preserved',
+    sender_role: 'system', text: '이전에 수용 가능했던 병원은 확정 후보로 유지합니다. 새 미문의 병원 한 곳에 문의합니다.',
+    at: 11, order_key: [11, 0, 11]};
+  h.state.messages.push(notice);
+  await h.poll();
+  assert.deepEqual(h.utterances.map(item => item.text), [notice.text]);
+});
+
+test('accepted reassignment uses the top inquiry tray and hospital card, then changes destination on click', async () => {
+  const h = harness({restored: true, hospitalList: [
+    {id: 'H01', name: '기존 병원', source: 'synthetic', lat: 35.1, lon: 126.8},
+    {id: 'H02', name: '대체 병원', source: 'synthetic', lat: 35.2, lon: 126.9},
+    {id: 'H03', name: '문의 중 병원', source: 'synthetic', lat: 35.3, lon: 127.0},
+  ]});
+  h.state.session = {id: 7, hospital_id: 'H01', hospital_name: '기존 병원'};
+  h.state.inquiries = [
+    {id: 40, hospital_id: 'H01', hospital_name: '기존 병원', state: 'CONFIRMED', usable: false},
+    {id: 42, hospital_id: 'H02', hospital_name: '대체 병원', state: 'ACCEPTED', usable: true},
+    {id: 43, hospital_id: 'H03', hospital_name: '문의 중 병원', state: 'PENDING', usable: false},
+  ];
+  h.state.messages.push({id: 'event:7', kind: 'system', type: 'departed',
+    sender_role: 'system', sender_name: '시스템', at: 7, text: '기존 병원으로 출발했습니다.',
+    order_key: [7, 0, 7]});
+  h.state.messages.push({id: 'event:8', kind: 'system', type: 'adjustment_needed',
+    sender_role: 'system', sender_name: '시스템', at: 8, text: '기존 병원에서 조정을 요청했습니다.',
+    data: {note: '현재 병상 부족'}, order_key: [8, 0, 8]});
+  h.state.messages.push({id: 'event:9', kind: 'system', type: 'transport_alternative_requested',
+    sender_role: 'system', sender_name: '시스템', at: 9, text: '대체 병원 탐색을 시작합니다.',
+    order_key: [9, 0, 9]});
+  h.state.messages.push({id: 'event:10', kind: 'system', type: 'transport_inquiry_ready',
+    sender_role: 'system', sender_name: '시스템', at: 10,
+    text: '대체병원의 유효한 수용 응답을 확보했습니다.', data: {accepted_inquiry_ids: [42]},
+    order_key: [10, 0, 10]});
+  await settle();
+  assert.equal(h.$('workspace').dataset.reassignmentActive, 'true');
+  const noticeGroup = h.document.getElementById('transport-notices-event:7');
+  assert.ok(noticeGroup, 'consecutive system events share one progress card');
+  assert.equal(noticeGroup.dataset.emphasis, 'decision');
+  assert.equal(noticeGroup.children[1].textContent, '수용 가능한 대체병원 확보 · 새 목적지를 확정하세요',
+    'accepted replacement state takes precedence over an earlier departure notice');
+  assert.match(noticeGroup.children[2].textContent, /조정 사유: 현재 병상 부족/);
+  assert.equal(noticeGroup.children[3].children[0].textContent, '자세히 4건');
+  assert.ok(!JSON.stringify(noticeGroup.children.map(node => node.dataset)).includes('transportConfirm'),
+    'the progress card has no isolated confirmation action');
+  const card = h.document.getElementById('transport-cand-H02');
+  assert.ok(card, 'the accepted alternative appears as a hospital card');
+  const descendants = node => [node, ...(node.children || []).flatMap(descendants)];
+  const trayRows = h.$('inquiries').children;
+  assert.deepEqual(trayRows.map(row => row.children[1].children[0].textContent), ['대체 병원', '문의 중 병원']);
+  const confirmButton = descendants(trayRows[0]).find(node => node.dataset.transportConfirm === '42');
+  assert.ok(confirmButton, 'accepted alternative is confirmed from the top inquiry tray');
+  assert.ok(descendants(card).some(node => node.dataset.transportConfirm === '42'),
+    'the hospital card offers the same action');
+  assert.equal(trayRows.flatMap(descendants).some(node => node.dataset.hospitalId === 'H01'), false,
+    'the current destination is not shown as a reassignment candidate');
+  assert.equal(h.$('current-destination').hidden, false);
+  assert.equal(h.$('current-destination').children[1].children[1].textContent, '기존 병원');
+  noticeGroup.details.open = true;
+
+  await confirmButton.emit('click');
+  const request = h.calls.find(call => call.url.endsWith('/change-destination'));
+  assert.equal(request.method, 'POST');
+  assert.equal(request.body.inquiry_id, 42);
+  assert.equal(h.state.session.hospital_id, 'H02');
+  assert.equal(h.$('workspace').dataset.reassignmentActive, 'false', 'resolved reassignment folds the tray');
+  assert.equal(h.$('current-destination').hidden, true);
+  assert.equal(h.document.getElementById('transport-notices-event:7'), noticeGroup, 'the progress card updates in place');
+  assert.equal(noticeGroup.details.open, true, 'an expanded timeline remains expanded when it updates');
+  assert.match(noticeGroup.children[1].textContent, /목적지가 변경/);
+});
+
 test('TTS asks the opening question and reads the intake reply once, not the receipt or draft summary', async () => {
-  const h = harness({intake: true}); await h.$('tts-toggle').emit('click'); await settle();
+  const h = harness({intake: true}); await h.document.emit('pointerdown'); await settle();
   assert.deepEqual(h.utterances.map(item => item.text), ['환자 상태를 알려주세요.']);
   h.type('나이 10세'); await h.submit(); await h.poll();
   assert.deepEqual(h.utterances.map(item => item.text), ['환자 상태를 알려주세요.', '나이: 10세']);
   const restored = harness({restored: true}); await settle();
   assert.equal(restored.utterances.length, 0);
-  await restored.$('tts-toggle').emit('click'); await settle();
-  assert.deepEqual(restored.utterances.map(item => item.text), ['환자 상태를 알려주세요.'], 'enabling before the first report asks the pending question');
+  await restored.document.emit('pointerdown'); await settle();
+  assert.deepEqual(restored.utterances.map(item => item.text), [], 'reopening does not replay the historical opening question');
+});
+
+test('a stale saved case falls back to the patient list and clears its remembered id', async () => {
+  const storage = new Map([['quick119.activeTransportPatientId', 'Q119-TEST-deleted']]);
+  const h = harness({restored: true, patientId: 'Q119-TEST-deleted', newCase: false, patientCases: [], storage});
+  await settle();
+  assert.deepEqual(h.navigation, ['/patients']);
+  assert.equal(storage.has('quick119.activeTransportPatientId'), false);
+  assert.equal(h.calls.some(call => call.url.includes('/api/patients/Q119-TEST-deleted')), false);
+});
+
+test('a case deleted in another tab redirects an open chat and clears its remembered id', async () => {
+  const patients = [{id: 'Q119-TEST-deleted', stage: '접수 중', active: true}];
+  const storage = new Map([['quick119.activeTransportPatientId', patients[0].id]]);
+  const h = harness({restored: true, patientId: patients[0].id, newCase: false, patientCases: patients, storage});
+  await settle();
+  assert.deepEqual(h.navigation, []);
+  patients.splice(0, 1);
+  h.state.conversationDeleted = true;
+  await h.poll();
+  assert.deepEqual(h.navigation, ['/patients']);
+  assert.equal(storage.has('quick119.activeTransportPatientId'), false);
+});
+
+test('TTS defaults on and only a saved user choice turns it off across reloads', async () => {
+  const storage = new Map();
+  const first = harness({restored: true, storage});
+  await settle();
+  assert.equal(first.$('tts-toggle')['aria-pressed'], 'true');
+  await first.$('tts-toggle').emit('click');
+  assert.equal(first.$('tts-toggle')['aria-pressed'], 'false');
+  assert.equal(storage.get('quick119.transportTts'), 'off');
+  const reopened = harness({restored: true, storage});
+  await settle();
+  assert.equal(reopened.$('tts-toggle')['aria-pressed'], 'false');
+  await reopened.$('tts-toggle').emit('click');
+  assert.equal(storage.get('quick119.transportTts'), 'on');
+  const enabledAgain = harness({restored: true, storage});
+  await settle();
+  assert.equal(enabledAgain.$('tts-toggle')['aria-pressed'], 'true');
+});
+
+test('patient-list selection and relaunch resume a server case without creating one', async () => {
+  const patients = [
+    {id: 'Q119-TEST-one', age: 32, stage: '접수 중', active: true, inquiries: []},
+    {id: 'Q119-TEST-two', age: 41, stage: '이송 중', active: true, inquiries: []},
+  ];
+  const storage = new Map([['quick119.activeTransportPatientId', patients[0].id]]);
+  const h = harness({newCase: false, patientCases: patients, storage});
+  await settle();
+  assert.equal(new URL(h.location.href).searchParams.get('pid'), patients[0].id);
+  assert.equal(storage.get('quick119.activeTransportPatientId'), patients[0].id);
+  assert.equal(h.calls.filter(call => call.url === '/api/patients' && call.method !== 'GET').length, 0);
+  assert.equal(h.$('patient-switcher'), undefined);
+
+  const reopened = harness({restored: true, patientId: patients[1].id, newCase: false, patientCases: patients, storage});
+  await settle();
+  assert.ok(reopened.calls.some(call => call.url.startsWith(`/api/patients/${patients[1].id}/conversation?`)));
+  assert.equal(storage.get('quick119.activeTransportPatientId'), patients[1].id);
+  assert.equal(reopened.calls.filter(call => call.url === '/api/patients' && call.method !== 'GET').length, 0);
+  const relaunched = harness({newCase: false, patientCases: patients, storage});
+  await settle();
+  assert.equal(new URL(relaunched.location.href).searchParams.get('pid'), patients[1].id);
+  assert.equal(relaunched.calls.filter(call => call.url === '/api/patients' && call.method !== 'GET').length, 0);
 });
 
 test('the confirmation sheet lists every sent report in full instead of the spoken summary and warnings', async () => {
@@ -211,21 +376,22 @@ test('the confirmation sheet lists every sent report in full instead of the spok
 });
 
 test('TTS plays PC-rendered Korean audio in order and falls back to the device voice when the PC voice is down', async () => {
-  const h = harness({restored: true, audio: true}); await h.$('tts-toggle').emit('click'); await settle();
+  const h = harness({restored: true, audio: true}); await h.document.emit('pointerdown'); await settle();
   const [player] = h.audios, spoken = () => h.calls.filter(call => call.url === '/api/transport-tts').map(call => call.body.text);
   const system = (n, text) => ({id: 'event:' + n, kind: 'system', type: 'patient_updated', sender_role: 'system',
     text, at: n, order_key: [n, 0, n]});
-  assert.match(player.plays[0], /^data:audio\/wav/, 'the toggle tap unlocks later playback');
+  assert.match(player.plays[0], /^data:audio\/wav/, 'the first touch unlocks later playback');
   h.state.messages.push(system(3, '첫 번째 안내'), system(4, '두 번째 안내')); await h.poll();
   assert.deepEqual(spoken(), ['첫 번째 안내'], 'the next message waits for the current audio');
   assert.match(player.plays[1], /^blob:/);
   player.onended(); await settle();
   assert.deepEqual(spoken(), ['첫 번째 안내', '두 번째 안내']);
   assert.equal(player.plays.length, 3); assert.equal(h.utterances.length, 0);
+  const pausesBeforeMap = player.paused;
   await h.$('toggle').emit('click');
-  assert.equal(player.paused, 1, 'map navigation stops PC audio');
+  assert.equal(player.paused, pausesBeforeMap, 'map navigation does not stop PC audio');
   const down = harness({restored: true, audio: true, pcVoice: false});
-  await down.$('tts-toggle').emit('click'); await settle();
+  await down.document.emit('pointerdown'); await settle();
   down.state.messages.push({id: 'event:3', kind: 'system', type: 'patient_updated', sender_role: 'system',
     text: '기기 음성 대체 안내', at: 3, order_key: [3, 0, 3]});
   await down.poll();
@@ -233,7 +399,7 @@ test('TTS plays PC-rendered Korean audio in order and falls back to the device v
 });
 
 for (const pcVoice of [true, false]) {
-  test(`inquiry registration and acceptance are spoken once in order with ${pcVoice ? 'PC audio' : 'device fallback'}`, async () => {
+  test(`inquiry bookkeeping is grouped and response summaries are spoken once with ${pcVoice ? 'PC audio' : 'device fallback'}`, async () => {
     const notice = (n, type, text) => ({id: 'event:' + n, kind: 'system', type, sender_role: 'system',
       text, at: n, order_key: [n, 0, n]});
     const oldSent = notice(2, 'inquiry_sent', '이전 수용 문의를 등록했습니다.');
@@ -241,28 +407,38 @@ for (const pcVoice of [true, false]) {
     const report = {id: 'message:1', message_id: 1, kind: 'message', sender_role: 'patient',
       text: '기존 보고', at: 1, order_key: [1, 1, 1]};
     const h = harness({restored: true, audio: true, pcVoice, conversationPages: [{items: [report, oldSent, oldCreated]}]});
-    await settle(); await h.$('tts-toggle').emit('click'); await settle();
+    h.state.inquiries = [
+      {id: 42, hospital_id: 'H02', hospital_name: '대체 병원', state: 'ACCEPTED', usable: true},
+      {id: 43, hospital_id: 'H03', hospital_name: '새 병원', state: 'DECLINED', usable: false},
+    ];
+    await settle(); await h.document.emit('pointerdown'); await settle();
     const spoken = () => h.calls.filter(call => call.url === '/api/transport-tts').map(call => call.body.text);
     assert.deepEqual(spoken(), [], 'historical registrations are silent');
     const sent = notice(4, 'inquiry_sent', '병원에 수용 문의를 등록했습니다.');
     const created = notice(5, 'inquiry_created', '다른 병원에 수용을 문의했습니다.');
-    const accepted = notice(6, 'inquiry_responded', '병원에서 수용 가능으로 응답했습니다.');
-    h.state.messages.push(oldSent, oldCreated, sent, created, accepted);
+    const accepted = {...notice(6, 'inquiry_responded', '대체 병원에서 수용 가능으로 응답했습니다.'),
+      hospital_id: 'H02', hospital_name: '대체 병원', data: {action: 'accept'}};
+    const declined = {...notice(7, 'inquiry_responded', '새 병원에서 수용 불가로 응답했습니다.'),
+      hospital_id: 'H03', hospital_name: '새 병원', data: {action: 'decline'}};
+    h.state.messages.push(oldSent, oldCreated, sent, created, accepted, declined);
     await h.poll(); await h.poll();
-    assert.deepEqual(spoken(), [sent.text], 'overlapping polls do not restart the queue');
+    const spokenAcceptance = '병원 회신: 대체 병원 수용 가능 · 새 병원 수용 불가';
+    assert.deepEqual(spoken(), [spokenAcceptance], 'routine registrations are silent and responses in one poll are combined');
+    const noticeGroups = h.$('messages').children.filter(node => node.dataset.kind === 'notice-group');
+    assert.equal(noticeGroups.length, 1, 'consecutive inquiry events occupy one progress card');
+    assert.match(noticeGroups[0].children[1].textContent, /병원 문의: 대체 병원 수용 가능 응답 · 새 병원 수용 불가/);
+    assert.equal(noticeGroups[0].children.at(-1).children[0].textContent, '자세히 6건');
     const finish = async index => {
       if (pcVoice) h.audios[0].onended();
       else h.utterances[index].onend();
       await settle();
     };
     await finish(0);
-    assert.deepEqual(spoken(), [sent.text, created.text]);
-    await finish(1);
-    assert.deepEqual(spoken(), [sent.text, created.text, accepted.text]);
-    await finish(2); await h.poll();
-    assert.deepEqual(spoken(), [sent.text, created.text, accepted.text], 'repeated polling does not replay notices');
+    assert.deepEqual(spoken(), [spokenAcceptance]);
+    await h.poll();
+    assert.deepEqual(spoken(), [spokenAcceptance], 'repeated polling does not replay the grouped response');
     if (pcVoice) assert.equal(h.utterances.length, 0);
-    else assert.deepEqual(h.utterances.map(item => item.text), [sent.text, created.text, accepted.text]);
+    else assert.deepEqual(h.utterances.map(item => item.text), [spokenAcceptance]);
   });
 }
 
@@ -271,13 +447,13 @@ test('cloud-enabled TTS supports remote and OS Korean voices and reports browser
     {name: '온라인 한국어', lang: 'ko-KR', localService: false, default: true},
     {name: '로컬 영어', lang: 'en-US', localService: true, default: true},
   ]});
-  await online.$('tts-toggle').emit('click'); await settle();
+  await online.document.emit('pointerdown'); await settle();
   online.state.messages.push({id: 'event:3', kind: 'system', type: 'patient_updated', sender_role: 'system',
     text: '온라인 음성 안내', at: 3, order_key: [3, 0, 3]});
   await online.poll();
   assert.equal(online.utterances[0].voice.name, '온라인 한국어');
   const noVoice = harness({restored: true, cloudSpeech: true, ttsVoices: [{name: '로컬 영어', lang: 'en-US', localService: true, default: true}]});
-  await noVoice.$('tts-toggle').emit('click'); await settle();
+  await noVoice.document.emit('pointerdown'); await settle();
   noVoice.state.messages.push({id: 'event:3', kind: 'system', type: 'patient_updated', sender_role: 'system',
     text: '기본 엔진 안내', at: 3, order_key: [3, 0, 3]});
   await noVoice.poll();
@@ -287,40 +463,45 @@ test('cloud-enabled TTS supports remote and OS Korean voices and reports browser
   noVoice.utterances[0].onerror({error: 'language-unavailable'});
   assert.match(noVoice.$('tts-status').textContent, /한국어 음성을 설치/);
   const unsupported = harness({restored: true, tts: false});
-  await unsupported.$('tts-toggle').emit('click'); await settle();
+  await unsupported.document.emit('pointerdown'); await settle();
   unsupported.state.messages.push({id: 'event:3', kind: 'system', type: 'patient_updated', sender_role: 'system',
     text: '미지원 안내', at: 3, order_key: [3, 0, 3]});
   await unsupported.poll();
   assert.match(unsupported.$('tts-status').textContent, /지원하지 않습니다/);
   const blocked = harness({restored: true});
-  await blocked.$('tts-toggle').emit('click'); await settle();
+  await blocked.document.emit('pointerdown'); await settle();
   blocked.state.messages.push({id: 'event:3', kind: 'system', type: 'patient_updated', sender_role: 'system',
     text: '자동재생 차단 안내', at: 3, order_key: [3, 0, 3]});
   await blocked.poll();
   blocked.utterances[0].onerror({error: 'not-allowed'});
-  assert.equal(blocked.$('tts-toggle')['aria-pressed'], 'false');
-  assert.match(blocked.$('tts-status').textContent, /다시 눌러 활성화/);
+  assert.equal(blocked.$('tts-toggle')['aria-pressed'], 'true');
+  assert.match(blocked.$('tts-status').textContent, /터치하면/);
 });
 
 test('offline TTS skips remote and unknown Korean voices even after PC audio fails', async () => {
   const voices = [{lang: 'ko-KR', localService: false}, {lang: 'ko-KR'}, {lang: 'en-US', localService: true}];
   const h = harness({restored: true, ttsVoices: voices, audio: true, pcVoice: false});
-  await settle(); await h.$('tts-toggle').emit('click'); await settle();
+  await settle(); await h.document.emit('pointerdown'); await settle();
+  assert.equal(h.calls.filter(call => call.url === '/api/transport-tts').length, 0, 'restored history stays silent');
+  assert.equal(h.utterances.length, 0);
+  h.state.messages.push({id: 'event:7', kind: 'system', type: 'patient_updated', sender_role: 'system',
+    text: '새 시스템 안내', at: 7, order_key: [7, 0, 7]});
+  await h.poll();
   assert.equal(h.calls.filter(call => call.url === '/api/transport-tts').length, 1);
   assert.equal(h.utterances.length, 0);
   assert.match(h.$('tts-status').textContent, /한국어 음성을 설치/);
   h.synthesis.voices = [{name: '설치된 한국어', lang: 'ko-KR', localService: true}];
   await h.synthesis.emit('voiceschanged');
   assert.match(h.$('tts-status').textContent, /한국어 음성을 사용할 수 있습니다/);
-  h.state.messages.push({id: 'event:7', kind: 'system', type: 'patient_updated', sender_role: 'system',
-    text: '새 시스템 안내', at: 7, order_key: [7, 0, 7]});
+  h.state.messages.push({id: 'event:8', kind: 'system', type: 'patient_updated', sender_role: 'system',
+    text: '새 한국어 시스템 안내', at: 8, order_key: [8, 0, 8]});
   await h.poll();
   assert.equal(h.utterances[0].voice.name, '설치된 한국어');
 });
 
 test('PC playback waits for device fallback and cancel discards queued messages and stale callbacks', async () => {
   const h = harness({restored: true, audio: true, pcVoice: [false, true, false, true]});
-  await h.$('tts-toggle').emit('click'); await settle();
+  await h.document.emit('pointerdown'); await settle();
   const system = n => ({id: 'event:' + n, kind: 'system', type: 'patient_updated', sender_role: 'system',
     text: '안내 ' + n, at: n, order_key: [n, 0, n]});
   const spoken = () => h.calls.filter(call => call.url === '/api/transport-tts').map(call => call.body.text);
@@ -332,33 +513,38 @@ test('PC playback waits for device fallback and cancel discards queued messages 
   h.audios[0].onended(); await settle();
   h.state.messages.push(system(4), system(5)); await h.poll();
   const lateError = h.utterances[1].onerror;
-  await h.$('toggle').emit('click'); await settle();
+  await h.$('tts-toggle').emit('click'); await settle();
   assert.equal(h.synthesis.canceled, 1);
+  h.state.messages.push({id: 'message:1', kind: 'message', sender_role: 'patient',
+    text: '기존 환자 보고', at: 5, order_key: [5, 1, 1]});
+  await h.poll();
   lateError({error: 'not-allowed'});
-  assert.equal(h.$('tts-toggle')['aria-pressed'], 'true');
-  await h.$('toggle').emit('click');
+  assert.equal(h.$('tts-toggle')['aria-pressed'], 'false');
+  await h.$('tts-toggle').emit('click');
+  await h.document.emit('pointerdown'); await settle();
   h.state.messages.push(system(6)); await h.poll();
   assert.deepEqual(spoken(), ['안내 2', '안내 3', '안내 4', '안내 6']);
 });
 
-test('TTS stops for map navigation, microphone input, and app suspension', async () => {
-  const h = harness(); await h.$('tts-toggle').emit('click'); await settle();
+test('TTS continues on the map and stops for microphone input and app suspension', async () => {
+  const h = harness({restored: true}); await h.document.emit('pointerdown'); await settle();
   const event = suffix => ({id: 'event:' + suffix, kind: 'system', type: 'patient_updated', sender_role: 'system',
     text: '중단 대상 안내 ' + suffix, at: Number(suffix), order_key: [Number(suffix), 0, Number(suffix)]});
   h.state.messages.push(event('2')); await h.poll();
   await h.$('toggle').emit('click');
-  assert.equal(h.synthesis.canceled, 1);
+  assert.equal(h.synthesis.canceled, 0);
+  assert.equal(h.utterances.at(-1).text, '중단 대상 안내 2');
   await h.$('toggle').emit('click');
   h.state.messages.push(event('3')); await h.poll();
   await h.document.emit('quick119:voice-state', {listening: true});
-  assert.equal(h.synthesis.canceled, 2);
+  assert.equal(h.synthesis.canceled, 1);
   await h.document.emit('quick119:voice-state', {listening: false});
   h.state.messages.push(event('4')); await h.poll();
   h.document.hidden = true; await h.document.emit('visibilitychange');
-  assert.equal(h.synthesis.canceled, 3);
+  assert.equal(h.synthesis.canceled, 2);
 });
 
-test('auto-created private intake works even if the hospital list fails; no fabricated patient facts', async () => {
+test('explicitly started private intake works even if the hospital list fails; no fabricated patient facts', async () => {
   const h = harness({hospitalFailure: true}); await settle();
   const creates = h.calls.filter(call => call.url === '/api/patients');
   assert.equal(creates.length, 1); assert.equal(creates[0].body.age, null); assert.equal(creates[0].body.symptoms, null);
@@ -392,11 +578,12 @@ test('reloading a pid restores one short welcome before notices from the next hi
   ]});
   await settle();
   assert.ok(h.calls.some(call => call.url.includes('event_cursor=1&')));
-  assert.deepEqual(h.$('messages').children.map(node => node.id), ['transport-item-intake-welcome', 'transport-item-event:2']);
+  assert.deepEqual(h.$('messages').children.map(node => node.id), ['transport-item-intake-welcome', 'transport-notices-event:2']);
   const [greeting, message] = h.$('messages').children;
   assert.equal(greeting.children[1].textContent, '환자 상태를 알려주세요.');
-  assert.equal(message.dataset.kind, 'notice');
+  assert.equal(message.dataset.kind, 'notice-group');
   assert.equal(message.children[1].textContent, notice.text);
+  assert.equal(message.children[2].children[0].textContent, '자세히 1건');
   assert.equal(h.calls.filter(call => call.url === '/api/patients').length, 0);
   assert.equal(h.$('new-case').hidden, true); assert.equal(h.$('message').disabled, false);
 });
@@ -584,7 +771,7 @@ test('confirmed and accepted inquiry chips lead DOM order while preserving order
   await h.poll();
   const rows = h.$('inquiries').children;
   assert.deepEqual(rows.map(row => row.children[1].children[0].textContent), ['H03', 'H02', 'H04', 'H01', 'H05']);
-  assert.deepEqual(rows.flatMap(row => row.children.filter(node => node.dataset.transportConfirm).map(node => node.dataset.transportConfirm)), [2, 4]);
+  assert.deepEqual(rows.flatMap(row => row.children.filter(node => node.dataset.transportConfirm).map(node => node.dataset.transportConfirm)), ['2', '4']);
 });
 
 test('search status announces a changed reason once, including repeated draft edits', async () => {

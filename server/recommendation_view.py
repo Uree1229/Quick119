@@ -2,7 +2,7 @@
 from contextlib import contextmanager
 import uuid
 
-from . import planning, service, allocation_input_review
+from . import planning, service, allocation_input_review, db
 
 
 @contextmanager
@@ -31,6 +31,24 @@ def candidates(conn, now, pid, estimator):
         result = service.candidates(conn, now, pid, estimator)
         patient = service._patient(conn, pid)
         return dict(result, input_review=allocation_input_review.assess(patient, now))
+
+
+def search_and_inquire(conn, now, pid, estimator):
+    """Select and contact the first three eligible candidates atomically and idempotently."""
+    with db.transaction(conn):
+        patient = service._patient(conn, pid)
+        service._require(patient['state'] == 'WAITING', 'INVALID_STATE',
+                         '수용 문의 전 상태의 환자만 후보를 탐색할 수 있습니다', 409, state=patient['state'])
+        result = service.candidates(conn, now, pid, estimator)
+        eligible = [candidate for candidate in result['candidates']
+                    if candidate['auto_inquiry_eligible']][:3]
+        existing = conn.execute('SELECT 1 FROM inquiries WHERE patient_id=? LIMIT 1', (pid,)).fetchone()
+        hospital_ids = [candidate['hospital_id'] for candidate in eligible]
+        if hospital_ids and not existing:
+            service._send_inquiries(conn, now, pid, hospital_ids, actor='automatic_candidate_search')
+        return dict(result, candidates=eligible,
+                    automatic_inquiry=dict(hospital_ids=hospital_ids, already_started=bool(existing)),
+                    input_review=allocation_input_review.assess(patient, now))
 
 
 def availability(runtime=None):

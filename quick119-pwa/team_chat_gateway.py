@@ -113,7 +113,9 @@ async def forward(request: Request):
                     if pid and request.method == 'GET' and request.url.path.endswith('/conversation'):
                         if hid is None:
                             result = dict(crew_conversation(result), intake_commands=True)
-                        elif (result.get('active_hospital_session') or {}).get('hospital_id') == hid:
+                        elif (result.get('active_hospital_session') or {}).get('hospital_id') != hid:
+                            raise HTTPException(403, '현재 이송 대화에 참여 중인 병원만 조회할 수 있습니다.')
+                        else:
                             # The hospital GET above is the authorization gate.
                             # Read global streams only for the current confirmed
                             # participant, then filter them before returning.
@@ -150,17 +152,21 @@ for method, path in (
     ("POST", "/api/hospitals/{hid}/external-arrivals"),
     ("POST", "/api/hospitals/{hid}/external-arrivals/{eid}/discharge"),
     ("POST", "/api/patients"),
+    ("GET", "/api/transport/patients"),
     ("GET", "/api/patients/{pid}"),
+    ("DELETE", "/api/patients/{pid}"),
     ("PATCH", "/api/patients/{pid}"),
     ("GET", "/api/patients/{pid}/intake-draft"),
     ("POST", "/api/patients/{pid}/intake-draft"),
     ("POST", "/api/patients/{pid}/intake-draft/confirm"),
     ("GET", "/api/patients/{pid}/candidates"),
+    ("POST", "/api/patients/{pid}/candidates"),
     ("GET", "/api/patients/{pid}/input-review"),
     ("GET", "/api/patients/{pid}/transport-review"),
     ("POST", "/api/patients/{pid}/inquiries"),
     ("POST", "/api/inquiries/{iid}/respond"),
     ("POST", "/api/patients/{pid}/confirm"),
+    ("POST", "/api/patients/{pid}/change-destination"),
     ("POST", "/api/patients/{pid}/depart"),
     ("GET", "/api/patients/{pid}/conversation"),
     ("POST", "/api/patients/{pid}/messages"),

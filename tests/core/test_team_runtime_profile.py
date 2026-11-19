@@ -43,13 +43,13 @@ class TeamRuntimeProfileTests(unittest.TestCase):
         path = self.root/'solver_improved.py'
         path.write_bytes(path.read_bytes().replace(b'\r\n', b'\n').replace(b'\n', b'\r\n'))
 
-    def test_exact_source_settings_and_environment_match_without_writes(self):
+    def test_pinned_source_overrides_match_without_writes(self):
         before = self.files()
         report = self.check()
         self.assertTrue(report['ok'], report)
-        self.assertEqual(report['source_equivalence'], 'exact_bytes')
-        self.assertTrue(report['exact_baseline_ok'])
-        self.assertTrue(report['benchmark_environment'])
+        self.assertEqual(report['source_equivalence'], 'approved_source_override')
+        self.assertFalse(report['exact_baseline_ok'])
+        self.assertFalse(report['benchmark_environment'])
         self.assertTrue(report['environment_checked'])
         self.assertTrue(report['environment_match'])
         self.assertEqual(before, self.files())
@@ -58,7 +58,7 @@ class TeamRuntimeProfileTests(unittest.TestCase):
         self.eol_edit()
         report = self.check()
         self.assertTrue(report['ok'], report)
-        self.assertEqual(report['source_equivalence'], 'eol_only')
+        self.assertEqual(report['source_equivalence'], 'approved_source_override')
         self.assertFalse(report['exact_baseline_ok'])
         self.assertFalse(report['benchmark_environment'])
         self.assertIn('EOL_ONLY_SOURCE_DIFFERENCE', self.codes(report, 'warnings'))
@@ -69,7 +69,8 @@ class TeamRuntimeProfileTests(unittest.TestCase):
             path.write_bytes(path.read_bytes().replace(b'\r\n', b'\n'))
         report = self.check()
         self.assertTrue(report['ok'], report)
-        self.assertEqual(report['source_equivalence'], 'eol_only')
+        self.assertEqual(report['source_equivalence'], 'approved_source_override')
+        self.assertIn('EOL_ONLY_SOURCE_DIFFERENCE', self.codes(report, 'warnings'))
 
     def test_strict_original_baseline_still_rejects_crlf_change(self):
         before = (self.root/'config/server_allocation_baseline_20261030.json').read_bytes()

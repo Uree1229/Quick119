@@ -93,6 +93,8 @@ def _event_item(event, hospital_name):
         'transport_recheck_acknowledged': f'{name}에서 현재 조건을 확인하고 기존 수용을 유지했습니다.',
         'transport_alternative_requested': f'{name}의 조정 요청에 따라 대체병원 탐색을 시작합니다. 현재 목적지는 유지합니다.',
         'transport_inquiry_started': '대체병원 자동 문의를 시작했습니다. 새 목적지는 사람이 확정합니다.',
+        'transport_inquiry_candidates_preserved':
+            '이전에 수용 가능했던 병원은 확정 후보로 유지합니다. 새 미문의 병원 한 곳에 문의합니다.',
         'transport_inquiry_decision': '현재 위치와 병원 회신을 바탕으로 다음 대체 문의를 판단했습니다.',
         'transport_inquiry_batch': f"대체병원 후보 {len(data.get('hospital_ids', []))}곳에 문의했습니다.",
         'transport_inquiry_waiting': data.get('note') or '대체병원 회신을 기다립니다. 현재 목적지는 유지합니다.',

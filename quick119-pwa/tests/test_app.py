@@ -105,7 +105,7 @@ class Quick119Tests(unittest.TestCase):
         response = self.client.get("/")
         self.assertNotIn('href="/voice-intake"', response.text)
         self.assertNotIn('음성 문진', response.text)
-        self.assertIn('class="emergency-cta" href="/transport/"', response.text)
+        self.assertIn('class="emergency-cta" href="/transport/?new=1"', response.text)
 
     def test_empty_patient_selection(self):
         response = self.client.get("/emergency?step=patient", follow_redirects=False)
@@ -151,9 +151,13 @@ class Quick119Tests(unittest.TestCase):
                                          (303, "/transport/"))
                     else:
                         self.assertEqual(response.status_code, 200, page)
+                        if page == "/patients":
+                            expected = "transport-patient-cases" if enabled == "1" and host in {"127.0.0.1", "::1"} else "q119-table"
+                            self.assertIn(expected, response.text, page)
+                            continue
                         self.assertIn('href="/transport/"', response.text, page)
                         self.assertNotIn("로컬 전용", response.text, page)
-                self.assertIn('class="emergency-cta" href="/transport/"', client.get("/").text)
+                self.assertIn('class="emergency-cta" href="/transport/?new=1"', client.get("/").text)
 
     def test_javascript_mime_with_nosniff(self):
         response = self.client.get("/static/hospital-chat.js")
@@ -687,6 +691,7 @@ class Quick119Tests(unittest.TestCase):
         self.assertEqual(Path("templates/medical-ui.css").read_bytes(), Path("static/medical-ui.css").read_bytes())
 
     def test_pwa_manifest_and_png_icons(self):
+        from fastapi.testclient import TestClient
         response = self.client.get("/manifest.webmanifest")
         self.assertEqual(response.status_code, 200)
         self.assertIn("application/manifest+json", response.headers["content-type"])
@@ -696,7 +701,10 @@ class Quick119Tests(unittest.TestCase):
         self.assertEqual(manifest["display"], "standalone")
         self.assertEqual(manifest["scope"], "/")
         self.assertEqual(manifest["background_color"], "#17375E")
-        self.assertEqual(self.client.get(manifest["start_url"]).status_code, 200)
+        with patch.dict(os.environ, {"QUICK119_TEAM_CHAT_ENABLED": "1",
+                                     "QUICK119_TEAM_CHAT_URL": "http://127.0.0.1:18033"}), \
+                TestClient(self.main.app, client=("127.0.0.1", 51000)) as pwa_client:
+            self.assertEqual(pwa_client.get(manifest["start_url"]).status_code, 200)
         for icon in manifest["icons"]:
             png = self.client.get(icon["src"])
             self.assertEqual(png.status_code, 200)
@@ -704,12 +712,20 @@ class Quick119Tests(unittest.TestCase):
             self.assertEqual(struct.unpack(">II", png.content[16:24]), tuple(map(int, icon["sizes"].split("x"))))
 
     def test_pwa_resources_on_new_and_legacy_pages(self):
-        for url in ["/", "/register", "/patients", "/emergency/check", "/pwa-check"]:
+        from fastapi.testclient import TestClient
+        for url in ["/", "/register", "/emergency/check", "/pwa-check"]:
             with self.subTest(url=url):
                 html = self.client.get(url).text
                 self.assertEqual(html.count('rel="manifest"'), 1)
                 self.assertEqual(html.count('src="/static/pwa.js"'), 1)
                 self.assertEqual(html.count('id="pwa-install"'), 1)
+        with patch.dict(os.environ, {"QUICK119_TEAM_CHAT_ENABLED": "1",
+                                     "QUICK119_TEAM_CHAT_URL": "http://127.0.0.1:18033"}), \
+                TestClient(self.main.app, client=("127.0.0.1", 51000)) as pwa_client:
+            html = pwa_client.get("/patients").text
+            self.assertEqual(html.count('rel="manifest"'), 1)
+            self.assertEqual(html.count('src="/static/pwa.js"'), 1)
+            self.assertEqual(html.count('id="pwa-install"'), 1)
 
     def test_sensitive_responses_no_store(self):
         patient_id = self.register()
