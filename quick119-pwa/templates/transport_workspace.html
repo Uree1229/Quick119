@@ -1,6 +1,6 @@
 <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-<link rel="stylesheet" href="/static/transport-workspace.css?v=12">
-<section id="transport-workspace" class="tw" aria-label="접수 채팅과 이송 지원" data-view="chat" data-stage="report" data-connection="pending" data-voice="idle">
+<link rel="stylesheet" href="/static/transport-workspace.css?v=13">
+<section id="transport-workspace" class="tw" aria-label="접수 채팅과 이송 지원" data-view="chat" data-stage="report" data-connection="pending" data-voice="idle" data-tts-cloud="{{ 'enabled' if tts_cloud else 'disabled' }}">
   <header class="tw-head">
     <div class="tw-head-row">
       <div class="tw-head-main">
@@ -9,6 +9,7 @@
       </div>
       <div class="tw-head-actions">
         <button type="button" id="transport-depart" class="tw-btn tw-btn-primary" hidden disabled>이송 출발</button>
+        <button type="button" id="transport-tts-toggle" class="tw-round tw-tts" aria-pressed="false" aria-label="시스템 메시지 낭독" title="시스템 메시지 낭독" aria-describedby="transport-tts-status{% if tts_cloud %} transport-tts-provider{% endif %}"><span class="tw-i" aria-hidden="true"></span></button>
         <button type="button" id="transport-patient-info" class="tw-round" aria-label="환자 정보 확인" title="환자 정보 확인"><span class="tw-i tw-i--patient" aria-hidden="true"></span></button>
         <button type="button" id="transport-toggle" class="tw-switch" aria-controls="transport-gps transport-chat" aria-expanded="true"><span class="tw-switch-icon" aria-hidden="true"></span><span id="transport-toggle-label">지도</span><span id="transport-unread" class="tw-badge" hidden aria-label="새 의료진 메시지"></span></button>
       </div>
@@ -24,6 +25,8 @@
     <p id="transport-connection" class="tw-banner tw-connection" role="status" aria-live="polite">접수 채팅을 준비하고 있습니다.</p>
     <p id="transport-error" class="tw-banner tw-error" role="alert" hidden></p>
     <div id="transport-inquiries" class="tw-inquiries" aria-label="수용 문의 및 목적지 확정" aria-live="polite"></div>
+    {% if tts_cloud %}<p id="transport-tts-provider" class="tw-room-note">온라인 낭독을 켜면 읽을 문장을 Microsoft 또는 기기 음성 제공자가 처리합니다.</p>{% endif %}
+    <p id="transport-tts-status" class="tw-room-note tw-tts-status" role="status" data-alert="false"></p>
   </div>
 
   <section id="transport-chat" class="tw-chat" aria-labelledby="transport-chat-title">
@@ -120,7 +123,6 @@
       </section>
       <section class="tw-cands" aria-labelledby="transport-hospitals-title">
         <div class="tw-section-head"><h2 id="transport-hospitals-title">후보 병원</h2><span class="tw-chip">최대 3곳</span></div>
-        <p id="transport-catalog-note" class="tw-fine" hidden>서울 병원명·주소·위치는 공공자료 기준입니다. 병상·수용 응답·이송 대화는 시연 데이터입니다.</p>
         <p id="transport-hospital-status" class="tw-cands-status" role="status">아직 병원 탐색을 시작하지 않았습니다.</p>
         <button type="button" id="transport-reload-hospitals" class="tw-btn tw-btn-ghost" hidden>병원 목록 다시 불러오기</button>
         <div id="transport-hospitals" class="tw-cand-list"></div>
@@ -171,5 +173,5 @@
 <script defer src="/static/chat-voice.js?v=7"></script>
 <script defer src="/static/voice-intake.js"></script>
 <script defer src="/static/patient-review.js?v=9"></script>
-<script defer src="/static/intake-commands.js?v=3"></script>
-<script defer src="/static/hospital-chat.js?v=16"></script>
+<script defer src="/static/intake-commands.js?v=5"></script>
+<script defer src="/static/hospital-chat.js?v=21"></script>

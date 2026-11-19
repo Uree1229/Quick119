@@ -94,6 +94,7 @@ async def lifespan(app):
 app = FastAPI(lifespan=lifespan)
 
 # Preparation only: disabled by default, synthetic loopback runtime required.
+from tts_audio import neural_enabled
 from team_chat_gateway import router as team_chat_router
 app.include_router(team_chat_router)
 from team_chat_ui import router as team_chat_ui_router, chat_ui_enabled
@@ -2750,7 +2751,7 @@ def emergency_hospitals(
                 '거리순으로 표시됩니다. 병원을 누르면 자세한 정보를 확인할 수 있습니다. '
                 '목록의 거리·시간은 응급실 조회 시 위치 기준이며, 자동차 경로 버튼은 GPS를 새로 확인합니다. '
                 '병상은 공공 API 보고값이며 실제 수용 가능 여부는 119·병원에 확인하세요.'
-                '</div>' + templates.env.get_template('transport_workspace.html' if chat_ui_enabled(request) else 'car_route_panel.html').render() + hospital_cards
+                '</div>' + templates.env.get_template('transport_workspace.html' if chat_ui_enabled(request) else 'car_route_panel.html').render(tts_cloud=neural_enabled()) + hospital_cards
             )
 
         else:

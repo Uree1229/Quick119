@@ -19,9 +19,163 @@
   let pid = null, creation = null, hospitals = [], snapshot = null;
   let eventCursor = 0, messageCursor = 0, epoch = 0, timer = null, pollTask = null;
   let suspended = document.hidden, operation = false, sending = false, fresh = false;
-  let initialRead = true, pending = null, voiceListening = false, hospitalTask = null;
+  let initialRead = true, catchingUp = false, newWelcome = false, pending = null, voiceListening = false, hospitalTask = null;
   let candidates = null, searchRevision = null, reviewUI = null, intake = null;
   let recognition = null;
+  let speechEnabled = false, speechAudio = null, speechAbort = null, finishAudio = null;
+  let speechGeneration = 0, speechBusy = false;
+  let finishDevice = null;
+  const consideredSpeech = new Set(), speechQueue = [];
+  const cloudSpeech = root.dataset.ttsCloud === 'enabled';
+  // Only the system's chat turns are read: the opening question, intake replies, and the edit notice.
+  const spokenNotices = new Set(['patient_updated']);
+  // 10 ms of silence played inside the toggle tap so later audio may start without a gesture (iOS/Android).
+  const silentWav = 'data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const serverSpeech = () => typeof window.Audio === 'function' && typeof URL.createObjectURL === 'function';
+  const deviceSpeech = () => !!window.speechSynthesis && typeof window.SpeechSynthesisUtterance === 'function';
+  function koreanVoice() {
+    const voices = window.speechSynthesis?.getVoices?.() || [];
+    const korean = voices.filter(voice => /^ko(?:-|$)/i.test(voice.lang || ''));
+    const pick = list => list.find(voice => /^ko-KR$/i.test(voice.lang) && voice.default)
+      || list.find(voice => /^ko-KR$/i.test(voice.lang))
+      || list.find(voice => voice.default) || list[0];
+    return pick(korean.filter(voice => voice.localService === true)) || (cloudSpeech && pick(korean)) || null;
+  }
+  const missingKoreanVoice = '기기에서 한국어 음성을 찾지 못했습니다. 기기 설정의 텍스트 음성 변환에서 한국어 음성을 설치해 주세요.';
+  // Routine on/off states stay screen-reader only; problems the user must act on are shown.
+  function speechStatus(message, alert = false) {
+    $('tts-status').textContent = message;
+    $('tts-status').dataset.alert = String(alert);
+  }
+  function stopSpeech() {
+    speechGeneration++; speechBusy = false; speechQueue.length = 0;
+    speechAbort?.abort(); speechAbort = null;
+    const finish = finishAudio; finishAudio = null;
+    if (finish) { speechAudio?.pause?.(); finish(); }
+    if (finishDevice) {
+      // Some engines never emit an end/error event on cancel.
+      finishDevice();
+      window.speechSynthesis.cancel();
+    }
+  }
+  function blockedSpeech() {
+    speechQueue.length = 0;
+    speechEnabled = false; $('tts-toggle').setAttribute('aria-pressed', 'false');
+    speechStatus('자동 재생이 차단됐습니다. 스피커 버튼을 다시 눌러 활성화해 주세요.', true);
+  }
+  function speak(text) {
+    if (!speechEnabled || !active() || !chatVisible() || voiceListening
+        || typeof text !== 'string' || !text.trim()) return;
+    speechQueue.push(text.trim());
+    if (!speechBusy) drainSpeech();
+  }
+  function readSystem(id, text, live) {
+    if (consideredSpeech.has(id)) return;
+    consideredSpeech.add(id);
+    if (live) speak(text);
+  }
+  async function drainSpeech() {
+    speechBusy = true;
+    const generation = speechGeneration;
+    while (speechQueue.length && generation === speechGeneration) {
+      const text = speechQueue.shift();
+      const played = serverSpeech() && await speakServer(text, generation);
+      if (!played && generation === speechGeneration) await speakDevice(text);
+    }
+    if (generation === speechGeneration) speechBusy = false;
+  }
+  // The PC renders Korean audio, so phones need no installed voice; false means fall back to the device.
+  async function speakServer(text, generation) {
+    let url = null, done = null;
+    try {
+      speechAbort = new AbortController();
+      const response = await fetch('/api/transport-tts', {method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text}), signal: speechAbort.signal});
+      if (!response.ok) return false;
+      const audio = await response.blob();
+      if (generation !== speechGeneration) return true;
+      url = URL.createObjectURL(audio);
+      speechAudio ||= new window.Audio();
+      await new Promise((resolve, reject) => {
+        done = finishAudio = resolve;
+        speechAudio.onended = resolve;
+        speechAudio.onerror = () => reject(new Error('audio playback failed'));
+        speechAudio.src = url;
+        Promise.resolve(speechAudio.play()).catch(reject);
+      });
+      return true;
+    } catch (error) {
+      if (generation !== speechGeneration) return true;
+      if (error?.name === 'NotAllowedError') { blockedSpeech(); return true; }
+      return false;
+    } finally {
+      if (finishAudio === done) finishAudio = null;
+      if (url) URL.revokeObjectURL(url);
+    }
+  }
+  function speakDevice(text) {
+    const synth = window.speechSynthesis, Utterance = window.SpeechSynthesisUtterance;
+    if (!deviceSpeech()) {
+      speechStatus('이 브라우저는 시스템 메시지 낭독을 지원하지 않습니다.', true);
+      return;
+    }
+    const voice = koreanVoice();
+    if (!voice && !cloudSpeech) {
+      speechStatus(missingKoreanVoice, true);
+      return;
+    }
+    const utterance = new Utterance(text);
+    if (voice) utterance.voice = voice;
+    utterance.lang = voice?.lang || 'ko-KR'; utterance.rate = 1.15;
+    return new Promise(resolve => {
+      function finish(event) {
+        if (finishDevice !== finish) return;
+        finishDevice = null;
+        utterance.onend = utterance.onerror = null;
+        const error = event?.error;
+        if (error === 'not-allowed') blockedSpeech();
+        else if (error === 'language-unavailable' || error === 'voice-unavailable') speechStatus(missingKoreanVoice, true);
+        else if (error && error !== 'canceled' && error !== 'interrupted') speechStatus('시스템 메시지를 읽지 못했습니다.', true);
+        resolve();
+      }
+      finishDevice = finish;
+      utterance.onend = utterance.onerror = finish;
+      try { synth.speak(utterance); }
+      catch { finish({error: 'synthesis-failed'}); }
+    });
+  }
+  function updateSpeechVoices() {
+    if (!speechEnabled || !koreanVoice()) return;
+    if ($('tts-status').textContent === missingKoreanVoice) {
+      speechStatus('기기 한국어 음성을 사용할 수 있습니다.');
+    }
+  }
+  $('tts-toggle').addEventListener('click', () => {
+    speechEnabled = !speechEnabled;
+    $('tts-toggle').setAttribute('aria-pressed', String(speechEnabled));
+    if (!speechEnabled) {
+      stopSpeech();
+      speechStatus('시스템 메시지 낭독이 꺼져 있습니다.');
+    } else if (serverSpeech()) {
+      speechAudio ||= new window.Audio();
+      speechAudio.src = silentWav;
+      try { Promise.resolve(speechAudio.play()).catch(() => {}); } catch {}
+      speechStatus('새 시스템 메시지를 읽습니다.');
+    } else if (!deviceSpeech()) {
+      speechStatus('이 브라우저는 시스템 메시지 낭독을 지원하지 않습니다.', true);
+    } else if (!cloudSpeech && !koreanVoice()) {
+      speechStatus(missingKoreanVoice, true);
+    } else speechStatus('새 시스템 메시지를 읽습니다.');
+    // Before the first report the opening question is still pending, so turning speech on asks it.
+    const greeting = items.get('intake-welcome');
+    if (speechEnabled && greeting && ![...items.values()].some(item => item.kind === 'message' || item.kind === 'command')) {
+      speak(greeting.text);
+    }
+  });
+  if (window.speechSynthesis?.addEventListener) {
+    window.speechSynthesis.addEventListener('voiceschanged', updateSpeechVoices);
+  } else if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = updateSpeechVoices;
+  speechStatus('시스템 메시지 낭독이 꺼져 있습니다.');
   function intakeEnabled() {
     return intake && snapshot?.intake_commands && !reviewState().locked;
   }
@@ -83,6 +237,7 @@
     if (!created && (page.has_more || page.active_hospital_session || page.conversation?.state !== 'OPEN')) return;
     items.set(id, {id, kind: 'system', sender_role: 'system', sender_name: '시스템',
       text: '환자 상태를 알려주세요.', at: created?.at, order_key: [-1]});
+    readSystem(id, items.get(id).text, newWelcome);
   }
   function messageNode(item) {
     const node = el('div', 'transport-message'); node.id = 'transport-item-' + item.id;
@@ -116,10 +271,15 @@
     if (chatVisible() && follow) { $('messages').scrollTop = $('messages').scrollHeight; markRead(); }
     else $('messages').scrollTop = scrollTop;
   }
-  function merge(incoming, countNew) {
+  function merge(incoming, countNew, live = false) {
     const following = chatVisible() && atBottom();
     for (const item of incoming) {
-      if (items.has(item.id) || (item.kind === 'system' && hiddenSystemEvents.has(item.type))) continue;
+      if (items.has(item.id)) continue;
+      if (item.kind === 'system' && item.sender_role === 'system') {
+        if (item.type === 'crew_intake_reply') readSystem(item.id, item.data?.reply, live);
+        else if (spokenNotices.has(item.type)) readSystem(item.id, item.text, live);
+      }
+      if (item.kind === 'system' && hiddenSystemEvents.has(item.type)) continue;
       if (item.kind === 'system' && item.type === 'crew_intake_reply') {
         // Commands are private UI turns, separate from the clinical reports shared with a hospital.
         if (item.data?.command_text) {
@@ -425,11 +585,12 @@
             detail: {previous: sessionId(), session: nextSession}}));
           snapshot = data;
           if (initialRead) includeIntakeGreeting(data);
-          merge(data.items, !initialRead);
+          merge(data.items, !initialRead, !initialRead && !catchingUp);
           eventCursor = data.cursors.event_id; messageCursor = data.cursors.message_id;
           more = data.has_more;
         } while (more);
-        initialRead = false; fresh = true; renderInquiries(); controls(); return true;
+        initialRead = false; catchingUp = false; newWelcome = false;
+        fresh = true; renderInquiries(); controls(); return true;
       } catch (failure) {
         if (epoch === ticket.epoch && active()) { fresh = false; error(failure.name === 'AbortError' ? '대화 조회 시간이 초과됐습니다. 다시 조회합니다.' : failure.message); controls(); }
         return false;
@@ -460,7 +621,6 @@
           seoulOrigin = null;
         }
         hospitals = list;
-        if ($('catalog-note')) $('catalog-note').hidden = !seoulOrigin;
         renderHospitals();
         $('reload-hospitals').hidden = true;
       } catch (failure) {
@@ -499,8 +659,7 @@
       candidates = result.candidates.slice(0, 3).map(hospital => ({...hospital, id: hospital.hospital_id}));
       searchRevision = revision; renderHospitals();
       $('hospital-status').textContent = candidates.length
-        ? `확인한 환자 정보에 따른 상위 후보 ${candidates.length}곳입니다. ${result.note || '병원의 수용 확인이 필요합니다.'}`
-        : '현재 조건의 후보 병원이 없습니다. 환자 정보와 자원·진료 분야 조건을 확인해 주세요.';
+        ? '' : '현재 조건의 후보 병원이 없습니다. 환자 정보와 자원·진료 분야 조건을 확인해 주세요.';
       document.dispatchEvent(new CustomEvent('quick119:show-view', {detail: {view: 'gps'}}));
     } finally { operation = false; controls(); }
   }
@@ -512,10 +671,10 @@
       age: null, symptoms: null, priority_source: 'unknown', ...intakeOrigin(),
       extra: {synthetic_fixture: true, creation_token: newMessageId()}};
     let data;
-    try { data = await api('/api/patients', creation); }
+    try { data = await api('/api/patients', creation); newWelcome = true; }
     catch (failure) {
       if (failure.status !== 409) throw failure;
-      data = await api('/api/patients/' + creation.id);
+      data = await api('/api/patients/' + creation.id); newWelcome = false;
     }
     if (data.id !== creation.id || data.extra?.creation_token !== creation.extra.creation_token) throw new Error('가상 이송 생성 결과를 확인하지 못했습니다.');
     if (ticket !== epoch) return;
@@ -550,7 +709,8 @@
       && Number.isInteger(m.message_id) && m.id === `message:${m.message_id}` && Array.isArray(m.order_key);
   }
   $('message-form').addEventListener('submit', async event => {
-    event.preventDefault(); if (sending || operation || voiceListening || !active() || (!pending && !canCompose())) return;
+    event.preventDefault(); stopSpeech();
+    if (sending || operation || voiceListening || !active() || (!pending && !canCompose())) return;
     if (!pending && draftSession !== undefined && draftSession !== sessionId()) return;
     const composed = $('message').value.trim(); if (!pending && !composed) return;
     if (!pending && composed.length > 2000) { error('메시지는 2,000자 이내로 나누어 보내 주세요.'); return; }
@@ -588,7 +748,7 @@
         throw new Error('저장 결과를 확인하지 못했습니다. 같은 요청으로 재시도하세요.');
       }
       if (ticket !== epoch || !active()) throw new Error('전송 결과를 다시 확인해야 합니다. 원래 요청으로 재시도해 주세요.');
-      merge([...(result.message ? [result.message] : []), ...(result.system_items || [])], false);
+      merge([...(result.message ? [result.message] : []), ...(result.system_items || [])], false, !result.duplicate);
       if (request.input) { receipt = result; searchRevision = null; }
       pending = null; draftSession = undefined; recognition = null; $('message').value = '';
     } catch (failure) {
@@ -613,15 +773,24 @@
   });
   $('mark-read').addEventListener('click', () => { $('messages').scrollTop = $('messages').scrollHeight; markRead(); });
   $('messages').addEventListener('scroll', () => { if (atBottom()) markRead(); });
-  document.addEventListener('quick119:view', () => {
+  document.addEventListener('quick119:view', event => {
+    if (event.detail.view === 'gps') stopSpeech();
     if (chatVisible()) requestAnimationFrame(() => { if (atBottom()) markRead(); });
     badge();
   });
-  document.addEventListener('quick119:voice-state', event => { voiceListening = !!event.detail.listening; controls(); });
-  function suspend() { suspended = true; epoch++; clearTimeout(timer); timer = null; abortRequests(); controls(); }
+  document.addEventListener('quick119:voice-state', event => {
+    voiceListening = !!event.detail.listening;
+    if (voiceListening) stopSpeech();
+    controls();
+  });
+  document.addEventListener('quick119:before-view', event => { if (event.detail.view === 'gps') stopSpeech(); });
+  function suspend() {
+    suspended = true; catchingUp = true; newWelcome = false; stopSpeech();
+    epoch++; clearTimeout(timer); timer = null; abortRequests(); controls();
+  }
   function resume() {
     if (document.hidden) return;
-    suspended = false; controls();
+    suspended = false; catchingUp = true; controls();
     if (pid) void pollNow();
     else if (!invalidRestored) void runOperation(createCase);
     if (!hospitals.length) void loadHospitals();
@@ -633,7 +802,7 @@
   const invalidRestored = !!restored && !idPattern.test(restored);
   if (restored) { if (idPattern.test(restored)) pid = restored; else error('가상 이송 ID만 열 수 있습니다.'); }
   intake = window.Quick119Intake?.bind({$, api, path, uuid: () => newMessageId(), error,
-    showItems: entries => merge(entries, false),
+    showItems: entries => merge(entries, false, true),
     canEdit: () => !!intakeEnabled() && !reviewState().blockedReason,
     search: async () => {
       if (!await pollNow()) throw new Error('저장 정보를 다시 조회해 주세요.');
