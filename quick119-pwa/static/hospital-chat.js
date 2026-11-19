@@ -27,8 +27,13 @@
   let finishDevice = null;
   const consideredSpeech = new Set(), speechQueue = [];
   const cloudSpeech = root.dataset.ttsCloud === 'enabled';
-  // Only the system's chat turns are read: the opening question, intake replies, and the edit notice.
-  const spokenNotices = new Set(['patient_updated']);
+  // Read the opening question, intake replies, edit notices, and hospital inquiry/transport status changes.
+  // Automatic-workflow, policy, monitor, and position bookkeeping stays silent.
+  const spokenNotices = new Set(['patient_updated', 'patient_information_amended',
+    'inquiry_sent', 'inquiry_created', 'inquiry_retried', 'inquiry_responded', 'inquiry_expired', 'inquiry_cancelled', 'inquiry_question',
+    'destination_confirmed', 'destination_changed', 'departed', 'adjustment_needed', 'hospital_keeps',
+    'transport_recheck_required', 'transport_recheck_acknowledged', 'transport_alternative_requested',
+    'arrival_confirmed', 'patient_cancelled']);
   // 10 ms of silence played inside the toggle tap so later audio may start without a gesture (iOS/Android).
   const silentWav = 'data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
   const serverSpeech = () => typeof window.Audio === 'function' && typeof URL.createObjectURL === 'function';
@@ -801,7 +806,7 @@
   const restored = new URLSearchParams(location.search).get('pid');
   const invalidRestored = !!restored && !idPattern.test(restored);
   if (restored) { if (idPattern.test(restored)) pid = restored; else error('가상 이송 ID만 열 수 있습니다.'); }
-  intake = window.Quick119Intake?.bind({$, api, path, uuid: () => newMessageId(), error,
+  intake = window.Quick119Intake?.bind({$, api, path, uuid: () => newMessageId(), error, reports: sentReports,
     showItems: entries => merge(entries, false, true),
     canEdit: () => !!intakeEnabled() && !reviewState().blockedReason,
     search: async () => {

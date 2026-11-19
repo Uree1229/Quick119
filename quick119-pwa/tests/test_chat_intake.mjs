@@ -11,7 +11,7 @@ const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(reso
 
 function harness({restored = false, hospitalFailure = false, seoul = false, speech = true, tts = true, cloudSpeech = false,
   ttsVoices = [{name: '한국어', lang: 'ko-KR', localService: true, default: true}], audio = false, pcVoice = true,
-  intake = false, viewport = false, embedded = false, conversationPages = []} = {}) {
+  intake = false, intakeEffect = null, viewport = false, embedded = false, conversationPages = []} = {}) {
   const nodes = new Map(), allNodes = new Set(), calls = [], timers = new Map(), speeches = [], utterances = [], audios = [];
   let nextTimer = 0, uuid = 0;
   class Events {
@@ -35,9 +35,11 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
     'discard', 'review-draft', 'pending', 'connection', 'chat-status',
     'hospitals', 'voice-panel', 'hospital-contact', 'hospital-status', 'reload-hospitals', 'inquiries', 'error', 'unread', 'toggle', 'toggle-label',
     'title', 'mark-read', 'review-panel', 'patient-info', 'start-search', 'review-close', 'review-close-top', 'review-form', 'search-status',
-    'tts-toggle', 'tts-status', 'intake-feedback', 'answer', 'command-panel', 'command-close', 'command-confirm'];
+    'tts-toggle', 'tts-status', 'intake-feedback', 'answer', 'command-panel', 'command-close', 'command-confirm',
+    'command-title', 'command-fields', 'command-reports', 'command-warnings'];
   for (const id of ids) { const node = new Element(); node.id = 'transport-' + id; }
   const $ = id => nodes.get('transport-' + id);
+  Object.assign($('command-panel'), {open: false, showModal() { this.open = true; }, close() { this.open = false; }});
   $('gps').hidden = true;
   $('workspace').dataset.ttsCloud = cloudSpeech ? 'enabled' : 'disabled';
   const document = new Events(); document.hidden = false;
@@ -104,8 +106,9 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
       return response({draft: {id: 'draft-1', version: 1, fields: {}, field_metadata: {}, speak_text: ''}});
     }
     if (url.endsWith('/intake-draft') && options.method === 'POST') {
-      return response({input_id: body.request_id, draft: {id: 'draft-1', version: 1, fields: {age: 10}, field_metadata: {}, speak_text: ''},
-        hints: [], action: 'observe', feedback: '환자 상태를 확인해 주세요.', revision: ['draft-1', 1],
+      return response({input_id: body.request_id, draft: {id: 'draft-1', version: 1, fields: {age: 10}, field_metadata: {},
+        speak_text: intakeEffect ? '나이 10세. 입력 내용을 확인해 주세요.' : '', ...(intakeEffect ? {warnings: ['나이 수치를 원문과 확인해 주세요.']} : {})},
+        hints: [], action: 'observe', feedback: '환자 상태를 확인해 주세요.', revision: ['draft-1', 1], ...(intakeEffect ? {effect: intakeEffect} : {}),
         system_items: [{id: 'event:9', kind: 'system', type: 'crew_intake_reply', sender_role: 'system', sender_name: '시스템',
           at: 5, text: '', data: {reply: '나이: 10세', command_text: body.text}, order_key: [5, 0, 9]}]});
     }
@@ -168,11 +171,16 @@ test('TTS selects a local Korean voice, reads only new system chat turns, and st
     {...next, id: 'event:4', type: 'patient_updated', text: '환자정보가 수정됐습니다.'},
     {...next, id: 'crew:1', kind: 'message', sender_role: 'patient', type: null, text: '구급대원 보고'},
     {...next, id: 'hospital:1', kind: 'message', sender_role: 'hospital', type: null, text: '병원 답장'},
-    {...next, id: 'event:5', type: 'inquiry_status_changed', text: '상태 변경'});
+    {...next, id: 'event:5', type: 'inquiry_status_changed', text: '상태 변경'},
+    {...next, id: 'event:6', type: 'inquiry_workflow_batch', text: '후보 2곳에 문의했습니다.'},
+    {...next, id: 'event:7', type: 'inquiry_responded', text: '가상 병원 H01에서 수용 가능으로 응답했습니다.'});
   await h.poll();
   assert.deepEqual(h.utterances.map(item => item.text), ['나이: 10세']);
   h.utterances[0].onend(); await settle();
   assert.deepEqual(h.utterances.map(item => item.text), ['나이: 10세', '환자정보가 수정됐습니다.']);
+  h.utterances[1].onend(); await settle();
+  assert.deepEqual(h.utterances.map(item => item.text), ['나이: 10세', '환자정보가 수정됐습니다.', '가상 병원 H01에서 수용 가능으로 응답했습니다.'],
+    'hospital responses are read; workflow bookkeeping is not');
   assert.equal(h.utterances[0].voice.name, '로컬 기본 한국어');
   assert.equal(h.utterances[0].lang, 'ko-KR'); assert.equal(h.utterances[0].rate, 1.15);
 });
@@ -186,6 +194,20 @@ test('TTS asks the opening question and reads the intake reply once, not the rec
   assert.equal(restored.utterances.length, 0);
   await restored.$('tts-toggle').emit('click'); await settle();
   assert.deepEqual(restored.utterances.map(item => item.text), ['환자 상태를 알려주세요.'], 'enabling before the first report asks the pending question');
+});
+
+test('the confirmation sheet lists every sent report in full instead of the spoken summary and warnings', async () => {
+  const report = {id: 'message:1', message_id: 1, kind: 'message', sender_role: 'patient', at: 2, order_key: [2, 1, 1],
+    text: '31세 남성 흉통\n혈압 150에 90, 맥박 110'};
+  const h = harness({restored: true, intake: true, intakeEffect: 'explicit_submit_api_required', conversationPages: [{items: [report]}]});
+  await settle();
+  h.type('병원 찾아줘'); await h.submit(); await settle();
+  assert.equal(h.$('command-panel').open, true);
+  assert.equal(h.$('command-title').textContent, '이 정보로 병원을 탐색할까요?');
+  const [block] = h.$('command-reports').children;
+  assert.equal(h.$('command-reports').children.length, 1);
+  assert.equal(block.children[1].textContent, report.text);
+  assert.equal(h.$('command-warnings').textContent, '', 'extraction warnings and the spoken summary are not shown');
 });
 
 test('TTS plays PC-rendered Korean audio in order and falls back to the device voice when the PC voice is down', async () => {
@@ -209,6 +231,40 @@ test('TTS plays PC-rendered Korean audio in order and falls back to the device v
   await down.poll();
   assert.deepEqual(down.utterances.map(item => item.text), ['기기 음성 대체 안내']);
 });
+
+for (const pcVoice of [true, false]) {
+  test(`inquiry registration and acceptance are spoken once in order with ${pcVoice ? 'PC audio' : 'device fallback'}`, async () => {
+    const notice = (n, type, text) => ({id: 'event:' + n, kind: 'system', type, sender_role: 'system',
+      text, at: n, order_key: [n, 0, n]});
+    const oldSent = notice(2, 'inquiry_sent', '이전 수용 문의를 등록했습니다.');
+    const oldCreated = notice(3, 'inquiry_created', '이전 병원에 수용을 문의했습니다.');
+    const report = {id: 'message:1', message_id: 1, kind: 'message', sender_role: 'patient',
+      text: '기존 보고', at: 1, order_key: [1, 1, 1]};
+    const h = harness({restored: true, audio: true, pcVoice, conversationPages: [{items: [report, oldSent, oldCreated]}]});
+    await settle(); await h.$('tts-toggle').emit('click'); await settle();
+    const spoken = () => h.calls.filter(call => call.url === '/api/transport-tts').map(call => call.body.text);
+    assert.deepEqual(spoken(), [], 'historical registrations are silent');
+    const sent = notice(4, 'inquiry_sent', '병원에 수용 문의를 등록했습니다.');
+    const created = notice(5, 'inquiry_created', '다른 병원에 수용을 문의했습니다.');
+    const accepted = notice(6, 'inquiry_responded', '병원에서 수용 가능으로 응답했습니다.');
+    h.state.messages.push(oldSent, oldCreated, sent, created, accepted);
+    await h.poll(); await h.poll();
+    assert.deepEqual(spoken(), [sent.text], 'overlapping polls do not restart the queue');
+    const finish = async index => {
+      if (pcVoice) h.audios[0].onended();
+      else h.utterances[index].onend();
+      await settle();
+    };
+    await finish(0);
+    assert.deepEqual(spoken(), [sent.text, created.text]);
+    await finish(1);
+    assert.deepEqual(spoken(), [sent.text, created.text, accepted.text]);
+    await finish(2); await h.poll();
+    assert.deepEqual(spoken(), [sent.text, created.text, accepted.text], 'repeated polling does not replay notices');
+    if (pcVoice) assert.equal(h.utterances.length, 0);
+    else assert.deepEqual(h.utterances.map(item => item.text), [sent.text, created.text, accepted.text]);
+  });
+}
 
 test('cloud-enabled TTS supports remote and OS Korean voices and reports browser errors', async () => {
   const online = harness({restored: true, cloudSpeech: true, ttsVoices: [

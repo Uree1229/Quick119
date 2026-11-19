@@ -30,7 +30,7 @@
     return /^(?:0|\+82)(?:2\d{7,8}|[3-6]\d{8,9}|70\d{8})$/.test(number) ? number : '';
   }
 
-  window.Quick119Intake = {isHospitalCall, dialNumber, bind({$, api, path, uuid, canEdit, search, error, showItems}) {
+  window.Quick119Intake = {isHospitalCall, dialNumber, bind({$, api, path, uuid, canEdit, search, error, showItems, reports}) {
     const panel = $('command-panel');
     if (!panel) return null;
     let draft, loading, intent, reviewed, posting = false, followup = null, answering = null;
@@ -51,7 +51,6 @@
       reviewed = revision();
       const fields = draft.fields;
       $('command-title').textContent = mode === 'search' ? '이 정보로 병원을 탐색할까요?' : '환자정보 확인';
-      $('command-summary').textContent = draft.speak_text;
       const list = $('command-fields'); list.replaceChildren();
       for (const [label, ...keys] of groups) {
         const item = document.createElement('div'), dt = document.createElement('dt'), dd = document.createElement('dd');
@@ -61,7 +60,17 @@
         } else dd.textContent = keys.map(key => value(key, fields[key])).filter(Boolean).join(' · ') || '미확인';
         item.append(dt, dd); list.append(item);
       }
-      $('command-warnings').textContent = [...(draft.warnings || []), ...(draft.asr_hints || [])].join('\n');
+      // Every sent report in full, so the extracted values can be checked against the original wording.
+      const sent = reports?.() || [], originals = $('command-reports');
+      originals?.replaceChildren(...sent.map(report => {
+        const block = document.createElement('div'), stamp = document.createElement('small'), body = document.createElement('p');
+        block.className = 'transport-review-report';
+        stamp.textContent = new Date(report.at * 1000).toLocaleString('ko-KR') + ' · 구급대원';
+        body.textContent = report.body || report.text || '';
+        block.append(stamp, body); return block;
+      }));
+      if (originals && !sent.length) { const empty = document.createElement('p'); empty.textContent = '아직 전송한 보고가 없습니다.'; originals.append(empty); }
+      $('command-warnings').textContent = '';
       $('command-confirm').hidden = mode === 'view';
       $('command-confirm').textContent = mode === 'search' ? '확인하고 병원 탐색' : '환자정보 확정';
       document.dispatchEvent(new CustomEvent('quick119:before-view', {detail: {view:'review'}}));

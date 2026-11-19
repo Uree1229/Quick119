@@ -372,11 +372,11 @@
 .tw-cand-link{display:inline-flex;align-items:center;gap:5px;min-height:36px;color:var(--tw-muted);font-size:12px;font-weight:700;text-decoration:underline;text-underline-offset:3px}
 
 /* ---------- Patient review sheet (native dialog) ---------- */
-#transport-review-panel{width:min(480px,calc(100vw - 16px));max-width:calc(100vw - 16px);max-height:min(92dvh,860px);margin:auto auto max(8px,env(safe-area-inset-bottom));padding:0;border:0;border-radius:24px;background:#fff;color:var(--tw-ink);overflow:hidden;box-shadow:0 24px 64px #0d1c2e5c}
-#transport-review-panel[open]{display:flex;flex-direction:column}
-#transport-review-panel::backdrop{background:rgb(13 28 46 / .55)}
-@media(min-width:600px){#transport-review-panel{margin:auto}}
-html:has(#transport-review-panel[open]),body:has(#transport-review-panel[open]){overflow:hidden;overscroll-behavior:none}
+:is(#transport-review-panel,#transport-command-panel){width:min(480px,calc(100vw - 16px));max-width:calc(100vw - 16px);max-height:min(92dvh,860px);margin:auto auto max(8px,env(safe-area-inset-bottom));padding:0;border:0;border-radius:24px;background:#fff;color:var(--tw-ink);overflow:hidden;box-shadow:0 24px 64px #0d1c2e5c}
+:is(#transport-review-panel,#transport-command-panel)[open]{display:flex;flex-direction:column}
+:is(#transport-review-panel,#transport-command-panel)::backdrop{background:rgb(13 28 46 / .55)}
+@media(min-width:600px){:is(#transport-review-panel,#transport-command-panel){margin:auto}}
+html:has(:is(#transport-review-panel,#transport-command-panel)[open]),body:has(:is(#transport-review-panel,#transport-command-panel)[open]){overflow:hidden;overscroll-behavior:none}
 .transport-review-header{display:flex;align-items:center;gap:10px;flex:none;padding:12px 12px 12px 16px;border-bottom:1px solid var(--tw-line);background:#fff}
 .tw-review-icon{display:grid;place-items:center;flex:none;width:38px;height:38px;border-radius:12px;background:var(--tw-navy-soft);color:var(--tw-navy)}
 .transport-review-header h3{flex:1;min-width:0;color:var(--tw-navy);font-size:17px;font-weight:900;letter-spacing:-.5px;line-height:1.35}
@@ -489,7 +489,7 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
   #transport-workspace[data-voice=listening] .tw-mic-stop{animation:tw-ring 1.6s ease-out infinite}
   .tw-pill:is([data-state=PENDING],[data-state=CHECKING])::before{animation:tw-blink 1.2s ease-in-out infinite}
   .tw-spinner{animation:tw-spin .8s linear infinite}
-  #transport-review-panel[open]{animation:tw-sheet .28s cubic-bezier(.2,.8,.2,1)}
+  :is(#transport-review-panel,#transport-command-panel)[open]{animation:tw-sheet .28s cubic-bezier(.2,.8,.2,1)}
   .tw-next,.tw-pending,#transport-new-case{animation:tw-in .2s ease-out both}
 }
 @keyframes tw-in{from{opacity:0;transform:translateY(6px)}}
@@ -540,3 +540,5 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
 .tw-command .tw-dialog-actions button { width: 100%; }
 #transport-command-confirm { min-height: 56px; font-size: 1.1rem; font-weight: 750; }
 #transport-command-warnings { white-space: pre-line; }
+/* The whole sheet body scrolls, so every original report is readable in full. */
+#transport-command-reports { max-height: none; overflow: visible; }
