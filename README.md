@@ -45,7 +45,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-team-chat.ps
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-chat-api.ps1 -SyntheticRoutes
 ```
 
-브라우저에서 [구급대 접수 화면](http://127.0.0.1:18034/transport/) 또는 [병원 웹](http://127.0.0.1:18034/hospital/?hid=H01)을 엽니다. 병원 웹 상단에서 가상 병원과 담당자 이름을 선택할 수 있습니다.
+두 서버가 실행되면 [퀵119 홈](http://127.0.0.1:18034/)에서 **응급상황 접수 시작**을 눌러 접수 채팅을 시작하세요. [접수 채팅](http://127.0.0.1:18034/transport/)으로 바로 열 수도 있고, [병원 웹](http://127.0.0.1:18034/hospital/?hid=H01) 상단에서 가상 병원과 담당자 이름을 선택할 수 있습니다. 공통 서버가 실행되지 않으면 채팅은 오류를 명시하며 기존 환자 접수 폼으로 전환하지 않습니다.
 
 - 기본 포트는 공통 서버 `18033`, 화면 서버 `18034`입니다. 충돌하면 첫 번째 명령의 `-Port`와 두 번째 명령의 `-Port`, `-TeamPort`를 맞춰 다른 포트를 지정하세요.
 - 종료할 때는 **각 실행 터미널에서** Ctrl+C를 누릅니다. 시연 DB는 `quick119-pwa/.local/`에 따로 보관되며, 오래된 가상 자원의 관측 시각만 갱신하려면 공통 서버 실행 시 `-RefreshSyntheticResources`를 지정합니다.

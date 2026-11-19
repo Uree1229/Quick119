@@ -8,14 +8,10 @@
 {% endblock %}
 {% block content %}
 <main class="home-main">
-  <a class="emergency-cta" href="{{ '/transport/' if chat_ui_enabled else '/emergency?step=patient' }}">{{ icon('siren') }}<span>응급상황 접수 시작</span>{{ icon('arrow') }}</a>
+  <a class="emergency-cta" href="/transport/">{{ icon('siren') }}<span>응급상황 접수 시작</span>{{ icon('arrow') }}</a>
   <h2 class="section-label">필요한 서비스를 빠르게</h2>
   <div class="shortcut-grid">
-    {% if chat_ui_enabled %}
     <a class="shortcut" href="/transport/">{{ icon('chat') }}<strong>접수 채팅</strong><small>시스템에 환자 상태 전달</small></a>
-    {% else %}
-    <a class="shortcut" href="/emergency/check?patient_id=0">{{ icon('plus') }}<strong>미등록 환자 접수</strong><small>환자 등록 없이 상태 확인</small></a>
-    {% endif %}
     <a class="shortcut" href="/patients">{{ icon('users') }}<strong>환자 목록</strong><small>등록된 환자 정보 확인</small></a>
     <a class="shortcut" href="/emergency/hospitals">{{ icon('hospital') }}<strong>주변 응급실</strong><small>현재 위치 기준 최대 5곳</small></a>
   </div>

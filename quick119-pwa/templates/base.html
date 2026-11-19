@@ -12,7 +12,6 @@
 </head>
 <body>
 <div class="app-shell{% block shell_class %}{% endblock %}">
-  {% block environment_note %}{% if app_env != 'production' %}<div class="environment-note">개발·테스트 환경 · 실제 신고 및 병원 API 연동 안 함</div>{% endif %}{% endblock %}
   {% block header %}
   <header class="app-header">
     <a class="back-button" href="/" aria-label="홈으로 돌아가기">{{ icon('back') }}</a>
@@ -27,7 +26,7 @@
     <a href="/" {% if active_nav == 'home' %}aria-current="page"{% endif %}>{{ icon('home') }}<span>홈</span></a>
     <a href="/patients">{{ icon('users') }}<span>환자</span></a>
     <a href="/emergency/hospitals">{{ icon('hospital') }}<span>응급실</span></a>
-    {% if chat_ui_enabled %}<a href="/transport/" {% if active_nav == 'transport' %}aria-current="page"{% endif %}>{{ icon('chat') }}<span>지도 · 채팅</span></a>{% else %}<button type="button" disabled aria-label="병원 채팅, 로컬 시연 전용">{{ icon('chat') }}<span>채팅 <small>로컬 전용</small></span></button>{% endif %}
+    <a href="/transport/" {% if active_nav == 'transport' %}aria-current="page"{% endif %}>{{ icon('chat') }}<span>채팅</span></a>
   </nav>
   {% endblock %}
 </div>

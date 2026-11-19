@@ -186,8 +186,6 @@ async def medical_ui_theme(request, call_next):
         html = theme + html
     current = request.url.path
     links = [("/", "홈"), ("/transport/", "접수 채팅"), ("/register", "환자 등록"), ("/patients", "환자 목록"), ("/emergency", "응급상황 접수")]
-    if not chat_ui_enabled(request):
-        links = [(href, title) for href, title in links if href != "/transport/"]
     menu = "".join('<a href="{}" {} class="{}">{}</a>'.format(
         href, 'aria-current="page"' if current == href else "",
         "med-emergency" if href == "/emergency" else "", title
@@ -726,8 +724,7 @@ def patient_detail(patient_id: int):
 
 @app.get("/voice-intake", response_class=HTMLResponse)
 def voice_intake_page(request: Request):
-    destination = "/transport/" if chat_ui_enabled(request) else "/emergency?step=patient"
-    return RedirectResponse(url=destination, status_code=303)
+    return RedirectResponse(url="/transport/", status_code=303)
 
 
 class PatientState(BaseModel):
@@ -768,9 +765,7 @@ def create_emergency_intake(report: EmergencyIntake):
 
 @app.get("/emergency", response_class=HTMLResponse)
 def emergency_page(request: Request, step: str = ""):
-    if step != "patient" and chat_ui_enabled(request):
-        return RedirectResponse(url="/transport/", status_code=303)
-    return templates.TemplateResponse(request=request, name="emergency.html", context={"patients": get_patients(), "active_nav": "", "app_env": APP_ENV})
+    return RedirectResponse(url="/transport/", status_code=303)
 
 
 # ==================================================
