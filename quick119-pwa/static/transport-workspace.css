@@ -1,15 +1,13 @@
 /* QUICK119 접수 채팅 · 지도 화면.
-   Brand tokens (navy/red/ink/line) follow quick119.css; the app header and home stay unchanged.
+   Brand tokens (navy/red/ink/line) follow quick119.css; home and its header stay unchanged.
    Presentation only: every id/data hook used by the chat, voice, review and GPS scripts is kept. */
 
 /* ---------- Full-height app screen inside the existing shell ---------- */
 .app-shell--workspace{display:flex;flex-direction:column;height:100vh;height:100dvh;min-height:0;padding-bottom:0}
-.app-shell--workspace>.app-header{flex:none}
 .transport-page{flex:1;min-height:0;display:flex;flex-direction:column}
 @media(min-width:600px){.app-shell--workspace{height:calc(100dvh - 48px)}}
 @media (min-width:600px) and (max-height:560px){
   .app-shell--workspace{height:100dvh;margin-block:0;border-radius:0}
-  .app-shell--workspace>.app-header{min-height:44px;padding-block:max(2px,env(safe-area-inset-top)) 2px}
 }
 
 /* ---------- Tokens, icons ---------- */
@@ -56,6 +54,7 @@
 #transport-workspace .tw-i{display:inline-block;flex:none;width:20px;height:20px;background:currentColor;-webkit-mask:var(--i) center/contain no-repeat;mask:var(--i) center/contain no-repeat}
 .tw-i--patient{--i:var(--i-patient)}.tw-i--close{--i:var(--i-close)}.tw-i--route{--i:var(--i-route)}.tw-i--pin{--i:var(--i-pin)}
 .tw-i--hospital{--i:var(--i-hospital)}.tw-i--alert{--i:var(--i-alert)}
+.tw-i--patient-list{--i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 6h11M10 12h11M10 18h11'/%3E%3Ccircle cx='4' cy='6' r='1' fill='%23000'/%3E%3Ccircle cx='4' cy='12' r='1' fill='%23000'/%3E%3Ccircle cx='4' cy='18' r='1' fill='%23000'/%3E%3C/svg%3E")}
 
 /* ---------- Buttons ---------- */
 #transport-workspace .tw-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:0 14px;border-radius:12px;border:1px solid transparent;font-size:14px;font-weight:800;line-height:1.25;letter-spacing:-.3px;text-align:center;text-decoration:none;white-space:normal;transition:background .15s,box-shadow .15s,opacity .15s}
@@ -72,6 +71,7 @@
 #transport-workspace .tw-round:disabled{opacity:.45;box-shadow:none}
 #transport-workspace .tw-round-sm{width:44px;height:44px}
 #transport-workspace .tw-round-sm .tw-i{width:20px;height:20px}
+#transport-workspace .tw-patient-list{text-decoration:none}
 #transport-workspace .tw-tts .tw-i{--i:var(--i-speaker-off)}
 #transport-workspace .tw-tts[aria-pressed=true]{border-color:var(--tw-navy);background:var(--tw-navy);color:#fff}
 #transport-workspace .tw-tts[aria-pressed=true] .tw-i{--i:var(--i-speaker)}
@@ -82,7 +82,11 @@
 .tw-head{position:relative;z-index:6;flex:none;background:#fff;border-bottom:1px solid var(--tw-line);box-shadow:0 3px 12px #17375e0d}
 .tw-head-row{display:flex;align-items:center;gap:8px;padding:10px 14px 6px 16px}
 .tw-head-main{flex:1;min-width:0}
+.tw-title-line{display:flex;align-items:center;gap:6px;min-width:0}
+.tw-home-link{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:50%;background:var(--tw-navy-soft);color:var(--tw-navy);font-size:20px;line-height:1;text-decoration:none}
+.tw-home-link:focus-visible{outline:2px solid var(--tw-navy);outline-offset:2px}
 #transport-workspace .tw-title{display:block;font-size:18px;font-weight:900;letter-spacing:-.7px;line-height:1.3;color:var(--tw-navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tw-title-line .tw-title{flex:1;min-width:0}
 #transport-workspace .tw-title:focus{outline:none}
 .tw-title::after{content:"";display:inline-block;width:8px;height:8px;margin-left:7px;vertical-align:3px;border-radius:50%;background:#e2a33a;box-shadow:0 0 0 3px #e2a33a2e}
 [data-connection=live] .tw-title::after{background:#22a06b;box-shadow:0 0 0 3px #22a06b2e}
@@ -115,9 +119,25 @@
 .tw-steps [data-state=done] .tw-step-dot::before{content:"";width:12px;height:12px;background:#fff;-webkit-mask:var(--i-check) center/contain no-repeat;mask:var(--i-check) center/contain no-repeat}
 .tw-steps [data-state=current]{color:var(--tw-red)}
 .tw-steps [data-state=current] .tw-step-dot{border-color:var(--tw-red);background:var(--tw-red);color:#fff;box-shadow:0 0 0 4px #e5484d24}
-/* After confirmation the destination chip gets its own full-width line, and the finished stepper and the inquiry tray
-   (the confirmed row plus the rows the server keeps as 문의 종료) fold. closed has no hospital chip, so it keeps the confirmed row. */
-#transport-workspace[data-stage=joined] :is(.tw-inquiries,.tw-steps){display:none}
+/* After confirmation, only an active adjustment reopens the shared inquiry tray. */
+#transport-workspace[data-stage=joined] .tw-steps{display:none}
+#transport-workspace[data-stage=joined]:not([data-reassignment-active=true]) .tw-inquiries{display:none}
+#transport-workspace .tw-assignment-strip{display:contents}
+#transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-assignment-strip{
+  display:flex;align-items:stretch;gap:6px;padding:6px 12px;background:#fff;border-bottom:1px solid var(--tw-line)
+}
+#transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiries{
+  flex:1 1 0;min-width:0;min-height:44px;padding:0;border:0;overflow-x:auto
+}
+#transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiries:has(.tw-btn-confirm){
+  flex-wrap:wrap;max-height:40%;overflow-x:hidden;overflow-y:auto
+}
+#transport-workspace .tw-current-destination{display:flex;flex:0 1 138px;align-items:center;gap:7px;min-width:0;padding:6px 8px;border:1px solid #bcd0e8;border-radius:12px;background:var(--tw-navy-soft)}
+#transport-workspace .tw-current-destination[hidden]{display:none}
+.tw-current-destination .tw-inquiry-icon{width:20px;height:20px}
+.tw-current-destination-copy{display:flex;min-width:0;flex-direction:column;line-height:1.25}
+.tw-current-destination-copy span{color:var(--tw-muted);font-size:10px;font-weight:800;white-space:nowrap}
+.tw-current-destination-copy strong{color:var(--tw-navy);font-size:12px;font-weight:900;overflow-wrap:anywhere}
 #transport-workspace[data-stage=closed] :is(.tw-steps,.transport-inquiry:not([data-state=CONFIRMED])){display:none}
 #transport-workspace[data-stage=joined] .tw-head-row{flex-wrap:wrap;row-gap:6px}
 #transport-workspace[data-stage=joined] .tw-head-main{display:contents}
@@ -187,13 +207,29 @@
 .transport-message[data-cont=true]::before{visibility:hidden}
 .transport-message[data-cont=true]:not([data-role=patient]) .transport-bubble{border-top-left-radius:16px}
 .transport-message[data-cont=true][data-role=patient] .transport-bubble{border-top-right-radius:16px}
-/* System events: one slim band each, the time closing the sentence. */
-.transport-message[data-kind=notice]{display:block;align-self:center;max-width:100%;margin-top:10px;padding:4px 11px;border-radius:12px;background:#e9eff6;color:#3f546c;font-size:12px;line-height:1.45;text-align:center}
-.transport-message[data-kind=notice]+.transport-message[data-kind=notice]{margin-top:4px}
+/* Clinically relevant single notices stay visible instead of joining a collapsed workflow group. */
+.transport-message[data-kind=notice]{display:block;align-self:center;max-width:100%;margin-top:10px;padding:5px 11px;border-radius:12px;background:#e9eff6;color:#3f546c;font-size:12px;line-height:1.45;text-align:center}
 .transport-message[data-kind=notice]::before{display:none}
 .transport-message[data-kind=notice] .transport-sender{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
 .transport-message[data-kind=notice] .transport-bubble{display:inline;max-width:none;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:inherit;font-size:12px;font-weight:700;line-height:1.45}
 .transport-message[data-kind=notice] .transport-time{display:inline;margin:0 0 0 6px;font-weight:600}
+/* Consecutive system events become one expandable progress card; their original text remains available inside. */
+.tw-system-group{align-self:center;width:min(100%,520px);margin-top:10px;padding:10px 12px;border:1px solid #d5e0ec;border-radius:14px;background:#f3f6fa;color:#344a61}
+.tw-system-group[data-emphasis=adjustment]{border-color:#e7c98f;background:#fff9ed}
+.tw-system-group[data-emphasis=decision]{border-color:#9fcab2;background:#f0faf4}
+.tw-system-group[data-emphasis=attention]{border-color:#e6c1a0;background:#fff5ee}
+.tw-system-group-title{display:flex;align-items:center;gap:6px;margin-bottom:3px;color:#52677e;font-size:10.5px;font-weight:900;letter-spacing:.02em}
+.tw-system-group-title::before{content:"";width:7px;height:7px;border-radius:50%;background:#73869b}
+.tw-system-group[data-emphasis=adjustment] .tw-system-group-title::before{background:#b97812}
+.tw-system-group[data-emphasis=decision] .tw-system-group-title::before{background:#18834e}
+.tw-system-group[data-emphasis=attention] .tw-system-group-title::before{background:#bc5b24}
+.tw-system-group-headline{margin:0!important;color:var(--tw-ink);font-size:13px;font-weight:800;line-height:1.45;overflow-wrap:anywhere}
+.tw-system-group-reason{margin:4px 0 0!important;color:#684c1d;font-size:12px;line-height:1.4;overflow-wrap:anywhere}
+.tw-system-group-details{margin-top:4px}
+.tw-system-group-details summary{display:flex;align-items:center;min-height:32px;color:#52677e;font-size:11.5px;font-weight:800;cursor:pointer}
+.tw-system-group-events{margin:0;padding:0 0 0 17px;color:#41566d;font-size:11.5px;line-height:1.45}
+.tw-system-group-events li{padding:2px 0;overflow-wrap:anywhere}
+.tw-system-group-events time{margin-left:6px;color:#718197;font-size:10.5px;white-space:nowrap}
 .tw-jump{position:absolute;left:50%;bottom:18px;z-index:3;display:inline-flex;align-items:center;gap:6px;height:44px;padding:0 16px;border:0;border-radius:20px;background:var(--tw-navy);color:#fff;font-size:13px;font-weight:800;box-shadow:0 8px 20px #17375e47;transform:translateX(-50%)}
 .tw-jump::before{content:"";width:16px;height:16px;background:currentColor;-webkit-mask:var(--i-down) center/contain no-repeat;mask:var(--i-down) center/contain no-repeat}
 
@@ -434,7 +470,6 @@ html:has(:is(#transport-review-panel,#transport-command-panel)[open]),body:has(:
    with 목적지 확정. Everything returns as soon as the keyboard closes. */
 html:has(#transport-workspace[data-kb=open]){scroll-behavior:auto}
 body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
-.app-shell--workspace:has(#transport-workspace[data-kb=open])>.app-header{display:none}
 /* Standalone and embedded chat use the visible viewport even when the keyboard only shrinks visualViewport. */
 .app-shell--workspace:has(#transport-workspace[data-kb=open]){height:var(--tw-vvh,100dvh);min-height:0;margin-block:0}
 #transport-workspace[data-kb=open]{height:var(--tw-vvh,100dvh);min-height:0}
@@ -500,6 +535,21 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
 @keyframes tw-sheet{from{opacity:0;transform:translateY(24px)}}
 
 /* ---------- Small phones ---------- */
+@media(max-width:520px){
+  #transport-workspace:not([data-stage=joined]) .tw-head-row{gap:6px}
+  #transport-workspace:not([data-stage=joined]) .tw-head-actions{gap:6px}
+  #transport-workspace:not([data-stage=joined]) .tw-title{font-size:16px}
+  #transport-workspace:not([data-stage=joined]) .tw-switch{padding:0 12px 0 10px}
+  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-assignment-strip{flex-direction:column;gap:6px;padding:6px 10px}
+  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-current-destination{flex:0 0 auto;width:100%;min-height:42px;padding:6px 9px}
+  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiries{flex:0 0 auto;width:100%;padding:0}
+  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiries:has(.tw-btn-confirm){flex-wrap:wrap;max-height:none;overflow:visible}
+  #transport-workspace[data-stage=joined][data-reassignment-active=true] .transport-inquiry{flex:1 1 100%;max-width:none;gap:8px;padding:0 8px}
+  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiry-copy{flex-direction:row;align-items:center;gap:6px}
+  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiry-copy strong{flex:1;white-space:normal;overflow-wrap:anywhere}
+  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiry-copy .tw-pill{flex:none;padding:0 6px;font-size:10.5px}
+  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-btn-confirm{max-width:140px;padding:0 8px;font-size:12px;white-space:normal}
+}
 @media(max-width:374px){
   .tw-head-row{padding:8px 10px 4px 12px;gap:6px}
   #transport-workspace .tw-title{font-size:16.5px}
@@ -526,7 +576,7 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
    Long alerts and extra actions scroll independently so they cannot displace the composer. */
 @container transport (max-height:440px){
   .tw-updates{display:block;flex:0 1 auto;min-height:0;max-height:27%;overflow-y:auto;scrollbar-width:thin}
-  #transport-workspace .tw-updates>.tw-inquiries{min-height:0;max-height:none}
+  #transport-workspace .tw-updates .tw-inquiries{min-height:0;max-height:none}
   #transport-workspace .tw-chat{min-height:0}
   /* Keep the latest line readable beside retry controls when room remains above the composer. */
   .tw-log{min-height:clamp(0px,calc(100% - 100px),32px)}

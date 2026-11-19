@@ -15,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from . import db, service, synthetic, conversations, inquiry_workflow, inquiry_policies, transport_review, transport_reassignment
+from . import transporter_registry
 from .travel import TravelEstimator
 from . import system_status
 from . import recommendation_view
@@ -486,8 +487,13 @@ def _(ctx, hid, rid):
 def _(ctx, hid, pid, act):
     b, actor = ctx.body, ctx.body.get('handled_by', 'hospital')
     if act == 'decision':
-        return service.hospital_decision(ctx.conn, ctx.now, pid, hid, b.get('decision'), b.get('note'), actor,
-                                        b.get('expected_review_version'), b.get('expected_risk_signature'))
+        result = service.hospital_decision(ctx.conn, ctx.now, pid, hid, b.get('decision'), b.get('note'), actor,
+                                           b.get('expected_review_version'), b.get('expected_risk_signature'))
+        if b.get('decision') == 'adjust':
+            review = transport_review.view(ctx.conn, ctx.now, pid)
+            if not review['enabled']:
+                transport_review.enable(ctx.conn, ctx.now, pid, True)
+        return result
     if act == 'arrive':
         return service.confirm_arrival(ctx.conn, ctx.now, pid, hid, actor)
     if act == 'no-show':
@@ -519,6 +525,11 @@ def _(ctx):
     return inquiry_policies.registry()
 
 
+@route('GET', r'/api/transport/patients')
+def _(ctx):
+    return {'patients': transporter_registry.cases(ctx.conn)}
+
+
 @route('POST', r'/api/patients')
 def _(ctx):
     b = dict(ctx.body)
@@ -531,6 +542,11 @@ def _(ctx, pid):
     return service.patient_view(ctx.conn, pid, ctx.now)
 
 
+@route('DELETE', r'/api/patients/(?P<pid>[\w-]+)')
+def _(ctx, pid):
+    return service.delete_transport_case(ctx.conn, ctx.now, pid, ctx.body)
+
+
 @route('PATCH', r'/api/patients/(?P<pid>[\w-]+)')
 def _(ctx, pid):
     return service.update_patient(ctx.conn, ctx.now, pid, ctx.body)
@@ -539,6 +555,11 @@ def _(ctx, pid):
 @route('GET', r'/api/patients/(?P<pid>[\w-]+)/candidates')
 def _(ctx, pid):
     return recommendation_view.candidates(ctx.conn, ctx.now, pid, ctx.estimator)
+
+
+@route('POST', r'/api/patients/(?P<pid>[\w-]+)/candidates')
+def _(ctx, pid):
+    return recommendation_view.search_and_inquire(ctx.conn, ctx.now, pid, ctx.estimator)
 
 
 @route('GET', r'/api/patients/(?P<pid>[\w-]+)/input-review')

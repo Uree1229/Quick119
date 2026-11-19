@@ -364,6 +364,13 @@ def create_patient(conn, now, pid, payload, actor='patient_web'):
     with transaction(conn):
         _require(conn.execute('SELECT 1 FROM patients WHERE id=?', (pid,)).fetchone() is None,
                  'DUPLICATE', '이미 있는 환자 ID', 409)
+        if fields['reporter_role'] == 'transporter' and pid.startswith('Q119-TEST-'):
+            sequence = conn.execute(
+                'SELECT next_number FROM transport_case_sequence WHERE id=1').fetchone()
+            _require(sequence is not None, 'INVALID_STATE', '환자 번호를 할당할 수 없습니다', 500)
+            fields['case_number'] = sequence['next_number']
+            conn.execute('UPDATE transport_case_sequence SET next_number=? WHERE id=1',
+                         (sequence['next_number'] + 1,))
         cols = ', '.join(fields)
         conn.execute(f'INSERT INTO patients ({cols}) VALUES ({",".join("?" * len(fields))})', tuple(fields.values()))
         log(conn, now, actor, 'patient_created', pid, danger=bool(payload.get('danger_signs')))
@@ -373,6 +380,60 @@ def create_patient(conn, now, pid, payload, actor='patient_web'):
             inquiry_workflow.attach(conn, now, pid, payload.get('inquiry_policy', 'fixed_3'),
                                     enabled=payload.get('auto_inquiry', False))
     return patient_view(conn, pid, now)
+
+
+def delete_transport_case(conn, now, pid, payload):
+    """Delete an inactive synthetic transport case and its mutable dependent records."""
+    _require(isinstance(payload, dict) and type(payload.get('confirm')) is bool
+             and payload['confirm'], 'CONFIRM_REQUIRED', '삭제 확인이 필요합니다')
+    with transaction(conn):
+        patient = _patient(conn, pid)
+        _require(patient['reporter_role'] == 'transporter' and pid.startswith('Q119-TEST-'),
+                 'FORBIDDEN', '시연 이송 접수만 삭제할 수 있습니다', 403)
+        conversation = row(conn.execute(
+            'SELECT * FROM conversations WHERE patient_id=?', (pid,)).fetchone())
+        has_active_session = bool(conversation and conn.execute(
+            'SELECT 1 FROM conversation_hospital_sessions '
+            'WHERE conversation_id=? AND left_at IS NULL LIMIT 1', (conversation['id'],)).fetchone())
+        _require(patient['state'] in {'WAITING', 'CANCELLED', 'COMPLETED'} and not has_active_session,
+                 'ACTIVE_CASE', '확정·이송·입원 중인 접수는 삭제할 수 없습니다. 종료 후 다시 시도하세요.', 409)
+        immutable = (
+            ('patient_amendments', 'SELECT 1 FROM patient_amendments WHERE patient_id=? LIMIT 1'),
+            ('call_records', 'SELECT 1 FROM call_records WHERE patient_id=? LIMIT 1'),
+            ('accounting_reconciliations',
+             "SELECT 1 FROM accounting_reconciliations WHERE target_kind='patient' AND target_id=? LIMIT 1"),
+        )
+        if any(conn.execute(query, (pid,)).fetchone() for _, query in immutable):
+            _require(False, 'AUDIT_RECORDS', '감사 이력이 있는 접수는 기록 보존을 위해 삭제할 수 없습니다', 409)
+
+        conn.execute('DELETE FROM planning_results WHERE patient_id=?', (pid,))
+        conn.execute('DELETE FROM inquiry_policy_decisions WHERE patient_id=?', (pid,))
+        conn.execute('DELETE FROM inquiry_workflows WHERE patient_id=?', (pid,))
+        conn.execute('DELETE FROM transport_inquiry_workflows WHERE patient_id=?', (pid,))
+        conn.execute('DELETE FROM transport_reviews WHERE patient_id=?', (pid,))
+        conn.execute('DELETE FROM work_activities WHERE patient_id=?', (pid,))
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='enroute_patient_reviews'").fetchone():
+            conn.execute('DELETE FROM enroute_patient_reviews WHERE patient_id=?', (pid,))
+        voice_session_ids = [row['id'] for row in conn.execute(
+            'SELECT id FROM voice_sessions WHERE patient_id=?', (pid,))]
+        for session_id in voice_session_ids:
+            conn.execute('DELETE FROM voice_requests WHERE instr(response,?)>0', (session_id,))
+        conn.execute('DELETE FROM voice_followup_answers WHERE session_id IN '
+                     '(SELECT id FROM voice_sessions WHERE patient_id=?)', (pid,))
+        conn.execute('DELETE FROM voice_revisions WHERE session_id IN '
+                     '(SELECT id FROM voice_sessions WHERE patient_id=?)', (pid,))
+        conn.execute('DELETE FROM voice_utterances WHERE session_id IN '
+                     '(SELECT id FROM voice_sessions WHERE patient_id=?)', (pid,))
+        conn.execute('DELETE FROM voice_sessions WHERE patient_id=?', (pid,))
+        if conversation:
+            conn.execute('DELETE FROM chat_messages WHERE conversation_id=?', (conversation['id'],))
+            conn.execute('DELETE FROM conversation_hospital_sessions WHERE conversation_id=?',
+                         (conversation['id'],))
+            conn.execute('DELETE FROM conversations WHERE id=?', (conversation['id'],))
+        conn.execute('DELETE FROM inquiries WHERE patient_id=?', (pid,))
+        conn.execute('DELETE FROM events WHERE patient_id=?', (pid,))
+        conn.execute('DELETE FROM patients WHERE id=?', (pid,))
+    return {'patient_id': pid, 'deleted': True}
 
 
 def update_patient(conn, now, pid, payload, actor='patient_web'):

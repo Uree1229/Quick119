@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block title %}접수 환자 | QUICK119{% endblock %}
+{% block content %}
+<main class="transport-patients">
+  <header class="transport-patients-heading">
+    <div>
+      <p class="transport-patients-eyebrow">TRANSPORT CASES</p>
+      <h1>환자 목록</h1>
+      <p>진행 중인 접수와 환자별 채팅 기록입니다.</p>
+    </div>
+    <a class="transport-patients-new" href="/transport/?new=1">새 접수</a>
+  </header>
+  <p id="transport-patients-status" class="transport-patients-status" role="status" aria-live="polite">접수 목록을 불러오고 있습니다.</p>
+  <section id="transport-patient-cases" class="transport-patient-cases" aria-label="접수 환자"></section>
+</main>
+<link rel="stylesheet" href="/static/transport-patients.css?v=2">
+<script src="/static/transport-patients.js?v=2" defer></script>
+{% endblock %}

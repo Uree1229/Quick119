@@ -1,0 +1,33 @@
+.transport-patients{width:min(100% - 32px,760px);margin:28px auto 110px;color:#15253b}
+.transport-patients-heading{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:18px}
+.transport-patients-heading h1{font-size:26px;letter-spacing:-.7px}
+.transport-patients-heading p:last-child{margin-top:5px;color:#66758a;font-size:13px}
+.transport-patients-eyebrow{margin-bottom:5px;color:#667f9a;font-size:10px;font-weight:900;letter-spacing:1.3px}
+.transport-patients-new{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 15px;border-radius:12px;background:#17375e;color:#fff;font-size:13px;font-weight:800;text-decoration:none}
+.transport-patients-status{margin:12px 0;color:#66758a;font-size:13px;line-height:1.5}
+.transport-patient-cases{display:grid;gap:10px}
+.transport-patient-case{padding:15px 16px;border:1px solid #dce3ed;border-radius:15px;background:#fff;box-shadow:0 3px 8px #17375e0a}
+.transport-patient-case-title:focus-visible,.transport-patient-open:focus-visible,.transport-patient-delete:focus-visible,.transport-patients-new:focus-visible,.transport-patient-case-details summary:focus-visible{outline:3px solid #3486e4;outline-offset:3px}
+.transport-patient-case-header{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.transport-patient-case-title{color:#17375e;font-size:15px;font-weight:900;text-decoration:none}
+.transport-patient-case-title:hover{text-decoration:underline;text-underline-offset:3px}
+.transport-patient-case-stage{flex:none;padding:4px 8px;border-radius:20px;background:#edf3fb;color:#17375e;font-size:11px;font-weight:800}
+.transport-patient-case[data-active=true] .transport-patient-case-stage{background:#e5f5ed;color:#1b7a52}
+.transport-patient-case-details{margin-top:8px}
+.transport-patient-case-details summary{width:fit-content;color:#52677e;font-size:12px;font-weight:800;cursor:pointer}
+.transport-patient-case-body{margin-top:8px;padding:10px 12px;border-radius:10px;background:#f5f8fc}
+.transport-patient-case-detail{color:#506078;font-size:12px;line-height:1.6}
+.transport-patient-case-detail+.transport-patient-case-detail{margin-top:3px}
+.transport-patient-inquiries{display:grid;gap:4px;margin:8px 0 0;padding:0;list-style:none}
+.transport-patient-inquiries li{display:flex;justify-content:space-between;gap:10px;color:#506078;font-size:12px}
+.transport-patient-inquiry-state{flex:none;color:#17375e;font-weight:800}
+.transport-patient-case-meta{display:flex;flex-wrap:wrap;gap:5px 12px;margin-top:8px;color:#758196;font-size:11px}
+.transport-patient-case-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:10px}
+.transport-patient-open,.transport-patient-delete{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 13px;border:1px solid #d4dfeb;border-radius:10px;background:#fff;color:#17375e;font:inherit;font-size:12px;font-weight:800;text-decoration:none;cursor:pointer}
+.transport-patient-open{border-color:#17375e;background:#17375e;color:#fff}
+.transport-patient-delete{border-color:#f0c7c7;color:#9b3030}
+.transport-patient-delete:disabled{opacity:.55;cursor:not-allowed}
+.transport-patient-delete-blocked{color:#8a6570;font-size:11px}
+.transport-patient-empty{padding:30px 18px;border:1px dashed #cbd6e3;border-radius:15px;color:#66758a;text-align:center;font-size:13px;line-height:1.6}
+.transport-patient-retry{margin:0 0 8px;padding:0;border:0;background:none;color:#17375e;font:inherit;font-weight:800;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+@media(max-width:420px){.transport-patients{width:calc(100% - 24px);margin-top:20px}.transport-patients-heading h1{font-size:23px}.transport-patient-case{padding:13px}}

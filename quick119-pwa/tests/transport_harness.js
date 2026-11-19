@@ -54,13 +54,22 @@
       routeCalls.push(body); return reply({code: 'ok', distance_m: 2000, duration_sec: 300,
         coordinates: [[body.origin.lon, body.origin.lat], [body.destination.lon, body.destination.lat]], cached: false});
     }
+    if (url.pathname === '/api/transport/patients') return reply({patients: []});
     if (url.pathname === '/api/hospitals') return reply(hospitals);
     if (url.pathname === '/api/patients') { patient = {...body, state: 'WAITING', version: 1}; events.push({id: 'event:1', kind: 'system', type: 'patient_created', sender_role: 'system', at: now / 1000, text: '가상 이송 생성', order_key: [1, 0, 1]}); return reply(body); }
     if (patient && url.pathname === '/api/patients/' + patient.id) {
       if (options.method === 'PATCH') patient = {...patient, ...body, version: patient.version + 1};
       return reply(patient);
     }
-    if (url.pathname.endsWith('/candidates')) return reply({candidates: hospitals.map(h => ({...h, hospital_id: h.id}))});
+    if (url.pathname.endsWith('/candidates')) {
+      if (options.method === 'POST') {
+        inquiries.push(...hospitals.map((h, index) => ({id: index + 1, hospital_id: h.id,
+          hospital_name: h.name, state: 'PENDING', usable: false})));
+        return reply({candidates: hospitals.map(h => ({...h, hospital_id: h.id})),
+          automatic_inquiry: {hospital_ids: hospitals.map(h => h.id), already_started: false}});
+      }
+      return reply({candidates: hospitals.map(h => ({...h, hospital_id: h.id}))});
+    }
     if (url.pathname.endsWith('/inquiries') && body) { inquiries.push({id: 1, hospital_id: body.hospital_ids[0], hospital_name: hospitals[0].name, state: 'PENDING', usable: false}); return reply({inquiries}); }
     if (url.pathname.endsWith('/confirm')) { check(accepted, 'Confirmation follows staff acceptance'); session = 1; inquiries[0].state = 'CONFIRMED'; return reply({id: patient.id}); }
     if (url.pathname.endsWith('/conversation')) {
@@ -98,15 +107,18 @@
   const staffMessage = text => { const n = messages.length + 1; messages.push({id: 'message:' + n, message_id: n, kind: 'message',
     sender_role: 'hospital', sender_name: '가상 의료진', text, body: text, at: now / 1000, order_key: [1, 1, n]}); };
   window.eval(NAV_SOURCE); window.eval(WORKSPACE_SOURCE); window.eval(VOICE_SOURCE); window.eval(REVIEW_SOURCE); window.eval(CHAT_SOURCE); await settle();
+  check(!patient && !$('new-case').disabled, 'A plain app launch does not create a new case');
+  $('new-case').click(); await settle();
   check(patient?.id.startsWith('Q119-TEST-'), 'Only a synthetic episode is created: ' + $('error').textContent);
-  check(!$('chat').hidden && $('gps').hidden && !$('send').disabled, 'Emergency entry automatically opens writable system/crew chat');
+  check(!$('chat').hidden && $('gps').hidden && !$('send').disabled, 'Explicit emergency entry opens writable system/crew chat');
   check($('participants').children.length === 2, 'Only system and crew participate before confirmation');
   check(patient.age == null && patient.symptoms == null, 'New room does not invent patient age or symptoms');
   $('message').value = '병원 확정 전 환자 상태 보고'; $('message').dispatchEvent(new Event('input'));
   $('message-form').dispatchEvent(new Event('submit', {bubbles: true, cancelable: true})); await settle();
   check(posts.length === 1 && posts[0].hospital_session_id === null && $('message').value === '', 'Private report is sent to the same room before any inquiry');
   $('start-search').click(); $('review-submit').click(); await settle();
-  check(!$('gps').hidden && document.querySelectorAll('[data-transport-inquire]').length === hospitals.length, 'Review opens map with ranked candidates');
+  check(!$('gps').hidden && document.querySelectorAll('[data-candidate-id]').length === hospitals.length
+    && !document.querySelector('[data-transport-inquire]'), 'Review opens map with ranked candidates and no manual inquiry controls');
   const handle = $('sheet-handle'), sheet = $('sheet');
   const sheetOpen = () => !sheet.hidden && handle.getAttribute('aria-expanded') === 'true';
   const listMapHeight = nav('map').clientHeight;
@@ -133,12 +145,14 @@
   delete handle.setPointerCapture;
   handle.click();
   const callsBeforePin = routeCalls.length;
+  const inquiriesBeforePin = inquiries.length;
   document.querySelector('.tw-pin').click();
-  check(sheetOpen() && $('cand-H01').dataset.focus === 'true' && routeCalls.length === callsBeforePin && !inquiries.length, 'A candidate pin reveals its card without routing or inquiring');
+  check(sheetOpen() && $('cand-H01').dataset.focus === 'true' && routeCalls.length === callsBeforePin
+    && inquiries.length === inquiriesBeforePin, 'A candidate pin reveals its card without changing the automatic inquiries');
   tileError();
   check(nav('map-status').textContent === '배경지도 일부를 불러오지 못했습니다.', 'Tile failure does not mislabel candidate or route data');
-  document.querySelector('[data-transport-inquire]').click(); await settle();
-  check(inquiries[0].state === 'PENDING' && !$('send').disabled && $('participants').children.length === 2, 'Inquiry keeps system/crew chat writable without adding hospital');
+  check(inquiries.length === hospitals.length && inquiries.every(q => q.state === 'PENDING')
+    && !$('send').disabled && $('participants').children.length === 2, 'Automatic inquiries keep system/crew chat writable without adding hospitals');
   accepted = true; inquiries[0].state = 'ACCEPTED'; inquiries[0].usable = true; await tick();
   check(!$('send').disabled && $('participants').children.length === 2 && !!document.querySelector('[data-transport-confirm]'), 'Staff acceptance alone does not add hospital');
   $('message').value = '시스템에 작성 중인 미전송 초안'; $('message').dispatchEvent(new Event('input'));

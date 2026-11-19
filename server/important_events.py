@@ -45,6 +45,7 @@ SUMMARIES = {
     'transport_conditions_restored': '확인된 조건 위험이 해소됐습니다.',
     'adjustment_needed': '현재 병원이 이송 조정을 요청했습니다.',
     'transport_alternative_requested': '병원 판단에 따라 대체병원 탐색이 요청됐습니다.',
+    'transport_inquiry_candidates_preserved': '이전에 수용 가능했던 병원은 확정 후보로 유지합니다.',
     'transport_inquiry_ready': '대체병원의 유효한 수용 응답이 있어 담당자 판단이 필요합니다.',
     'transport_inquiry_exhausted': '대체병원 자동 탐색이 종료되어 담당자 판단이 필요합니다.',
     'enroute_patient_change_requested': '구급대원이 이송 중 환자 상태·치료조건 변경안을 보냈습니다. 현재 병원의 검토가 필요합니다.',

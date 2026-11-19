@@ -74,7 +74,7 @@ class AlternativeWorkflow(AlternativeBase):
         self.worker()
         self.assertTrue(self.job()['enabled'])
         alternatives = self.open_alternatives()
-        self.assertEqual(len(alternatives), 3)
+        self.assertEqual(len(alternatives), 1)
         self.assertNotIn('H1', [q['hospital_id'] for q in alternatives])
         self.assertNotIn('H3', [q['hospital_id'] for q in alternatives])
         self.assertTrue(all(q['attempts'] == 1 for q in alternatives))
@@ -126,6 +126,7 @@ class AlternativeWorkflow(AlternativeBase):
         self.assertFalse(self.job()['enabled'])
         self.assertEqual(self.open_alternatives(), [])
         self.assertTrue(service._patient(self.conn, 'A')['needs_adjustment'])
+        self.assertEqual(service._patient(self.conn, 'A')['destination_hospital_id'], 'H1')
 
     def test_stale_position_waits_until_current_location_is_received(self):
         self.add_alternatives()
@@ -194,26 +195,55 @@ class AlternativeWorkflow(AlternativeBase):
         self.assertEqual(different.exception.code, 'POLICY_ACTIVE')
         self.assertEqual(self.job(now=T0 + 40), before)
 
-    def test_cancelled_initial_inquiry_is_reused_but_has_new_episode_budget(self):
+    def test_prior_acceptances_are_preserved_and_only_one_uncontacted_hospital_is_asked(self):
         self.add_alternatives()
+        service.upsert_hospital(self.conn, dict(
+            id='D1', name='D1', lat=35.18, lon=126.86,
+            capabilities=['응급의학', '소아청소년과'], source='synthetic'))
+        service.set_resource(self.conn, T0, 'D1', 'ed_bed', 8, 0)
         self.patient()
-        service.send_inquiries(self.conn, T0 + 1, 'A', ['H1', 'H2', 'H3', 'R1', 'R2', 'R3', 'R4', 'R5'])
+        service.send_inquiries(self.conn, T0 + 1, 'A', ['H1', 'H2', 'H3', 'D1'])
         service.respond(self.conn, T0 + 10, self.inquiry_id('A', 'H1'), 'accept', '원병원')
+        service.respond(self.conn, T0 + 11, self.inquiry_id('A', 'H2'), 'accept', '수용 가능 병원')
+        service.respond(self.conn, T0 + 12, self.inquiry_id('A', 'H3'), 'accept', '수용 가능 병원')
+        service.respond(self.conn, T0 + 13, self.inquiry_id('A', 'D1'), 'decline',
+                        '거절 병원', reason='진료 불가')
         service.confirm_destination(self.conn, T0 + 20, 'A', self.inquiry_id('A', 'H1'))
         service.depart(self.conn, T0 + 21, 'A', EST)
         from server import transport_review
         transport_review.enable(self.conn, T0 + 22, 'A', True)
-        old_id = self.inquiry_id('A', 'H2')
         self.request_adjustment()
         self.worker()
         job = self.job()
-        self.assertEqual(job['contacted_count'], 3)
-        self.assertIn('H2', job['contacted_hospital_ids'])
-        self.assertEqual(self.inquiry_id('A', 'H2'), old_id)
-        reused = service._inquiry(self.conn, old_id)
-        self.assertEqual(reused['attempts'], 2)
-        self.assertEqual(reused['state'], 'PENDING')
-        self.assertEqual(reused['patient_version'], service._patient(self.conn, 'A')['version'])
+        self.assertEqual(job['contacted_count'], 1)
+        self.assertEqual(len(job['contacted_hospital_ids']), 1)
+        new_hospital = job['contacted_hospital_ids'][0]
+        self.assertNotIn(new_hospital, ('H1', 'H2', 'H3', 'D1'))
+        fresh_candidates = [c['hospital_id'] for c in service.candidates(
+            self.conn, T0 + 32, 'A', EST)['candidates'] if c['hospital_id'] not in ('H1', 'H2', 'H3', 'D1')]
+        self.assertEqual(new_hospital, fresh_candidates[0])
+        h2_id, h3_id = self.inquiry_id('A', 'H2'), self.inquiry_id('A', 'H3')
+        accepted = service._inquiry(self.conn, h2_id)
+        accepted_h3 = service._inquiry(self.conn, h3_id)
+        declined = service._inquiry(self.conn, self.inquiry_id('A', 'D1'))
+        self.assertEqual((accepted['state'], accepted['attempts']), ('ACCEPTED', 1))
+        self.assertEqual((accepted_h3['state'], accepted_h3['attempts']), ('ACCEPTED', 1))
+        self.assertEqual(accepted['patient_version'], service._patient(self.conn, 'A')['version'])
+        self.assertEqual((declined['state'], declined['attempts']), ('DECLINED', 1))
+        patient = service.patient_view(self.conn, 'A', T0 + 32)
+        self.assertTrue(next(q for q in patient['inquiries'] if q['hospital_id'] == 'H2')['usable'])
+        self.assertTrue(next(q for q in patient['inquiries'] if q['hospital_id'] == 'H3')['usable'])
+        self.assertIn(accepted['id'], job['valid_accepted_inquiry_ids'])
+        self.assertIn(accepted_h3['id'], job['valid_accepted_inquiry_ids'])
+        self.assertIn('transport_inquiry_candidates_preserved', self.event_types())
+        conversation = conversations.get_conversation(self.conn, T0 + 32, 'A')
+        summaries = [item.get('text', '') for item in conversation['items']]
+        self.assertTrue(any('수용 가능했던 병원은 확정 후보로 유지' in text for text in summaries))
+        self.assertTrue(any('후보 1곳에 문의' in text for text in summaries))
+        changed = service.change_destination(self.conn, T0 + 33, 'A', accepted['id'], EST,
+                                            lat=35.18, lon=126.85)
+        self.assertEqual(changed['destination_hospital_id'], 'H2')
+        self.assertFalse(changed['needs_adjustment'])
 
     def test_deadline_stops_new_contacts_but_preserves_pending_and_late_valid_acceptance(self):
         self.add_alternatives()
@@ -291,7 +321,7 @@ class AlternativeCalculationRaces(AlternativeBase):
         self.assertTrue(self.job()['enabled'])
         self.assertNotIn('transport_inquiry_batch', self.event_types())
         self.worker(T0 + 33)
-        self.assertEqual(len(self.open_alternatives()), 3)
+        self.assertEqual(len(self.open_alternatives()), 1)
 
     def test_candidate_resource_change_discards_revision_then_recomputes(self):
         self.add_alternatives()
@@ -321,7 +351,7 @@ class AlternativeCalculationRaces(AlternativeBase):
 
         self.worker(T0 + 33)
         alternatives = self.open_alternatives()
-        self.assertEqual(len(alternatives), 3)
+        self.assertEqual(len(alternatives), 1)
         self.assertNotIn('H2', [q['hospital_id'] for q in alternatives])
         self.assertEqual(service._patient(self.conn, 'A')['destination_hospital_id'], 'H1')
         self.assertEqual(self.event_types().count('transport_inquiry_batch'), 1)
@@ -346,6 +376,6 @@ class AlternativeCalculationRaces(AlternativeBase):
             thread.join(timeout=10)
         self.assertFalse(any(thread.is_alive() for thread in threads))
         self.assertEqual(errors, [])
-        self.assertEqual(len(self.open_alternatives()), 3)
+        self.assertEqual(len(self.open_alternatives()), 1)
         self.assertEqual(self.event_types().count('transport_inquiry_batch'), 1)
         self.assertEqual(self.event_types().count('transport_inquiry_decision'), 1)

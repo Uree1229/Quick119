@@ -12,7 +12,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-from server import db, scenario, service, synthetic
+from server import db, scenario, service, synthetic, transporter_registry
 from server.app import make_handler
 from server.service import ServiceError
 from server.travel import TravelEstimator
@@ -102,6 +102,114 @@ class NormalFlow(Base):
         self.assertEqual(types[0], 'patient_created')
         self.assertIn('destination_confirmed', types)
         self.assertEqual(types[-1], 'discharged')
+
+    def test_transporter_registry_contains_only_test_transport_cases(self):
+        self.patient('Q119-TEST-one', reporter_role='transporter')
+        self.patient('Q119-TEST-two', reporter_role='transporter')
+        self.patient('Q119-TEST-guardian', reporter_role='guardian')
+        self.patient('ordinary-transporter', reporter_role='transporter')
+        service.send_inquiries(self.conn, T0 + 1, 'Q119-TEST-one', ['H1'])
+        service.respond(self.conn, T0 + 2, self.inquiry_id('Q119-TEST-one', 'H1'), 'accept', 'nurse1')
+
+        cases = transporter_registry.cases(self.conn)
+
+        self.assertEqual({case['id']: case['case_number'] for case in cases},
+                         {'Q119-TEST-one': 1, 'Q119-TEST-two': 2})
+        first = next(case for case in cases if case['id'] == 'Q119-TEST-one')
+        self.assertEqual(first['stage'], '수용 응답 · 확정 대기')
+        self.assertEqual(first['inquiries'][0]['state'], 'ACCEPTED')
+        self.assertTrue(first['active'])
+
+    def test_transport_case_delete_removes_dependents_without_reusing_number(self):
+        self.patient('Q119-TEST-one', reporter_role='transporter')
+        self.patient('Q119-TEST-two', reporter_role='transporter')
+        service.send_inquiries(self.conn, T0 + 1, 'Q119-TEST-one', ['H1'])
+        self.conn.execute("UPDATE patients SET state='COMPLETED' WHERE id='Q119-TEST-one'")
+        conversation_id = self.conn.execute(
+            'SELECT id FROM conversations WHERE patient_id=?', ('Q119-TEST-one',)).fetchone()[0]
+        event_id = self.conn.execute(
+            "SELECT id FROM events WHERE patient_id=? AND type='patient_created'", ('Q119-TEST-one',)).fetchone()[0]
+        self.conn.execute(
+            'INSERT INTO chat_messages (conversation_id,sender_role,sender_name,body,created_at,client_message_id) '
+            'VALUES (?,?,?,?,?,?)', (conversation_id, 'patient', '구급대원', '가상 보고', T0 + 1, 'delete-test'))
+        self.conn.execute(
+            'INSERT INTO important_event_receipts (event_id,role,actor_id,delivered_at) VALUES (?,?,?,?)',
+            (event_id, 'paramedic', 'crew', T0 + 1))
+        self.conn.execute(
+            'INSERT INTO work_activities (patient_id,role,actor_id,client_activity_id,kind,started_at) '
+            'VALUES (?,?,?,?,?,?)', ('Q119-TEST-one', 'paramedic', 'crew', 'delete-test', 'chat', T0 + 1))
+        session_id = 'voice-session-delete-test'
+        self.conn.execute(
+            'INSERT INTO voice_sessions (id,actor_id,patient_id,created_at,updated_at) VALUES (?,?,?,?,?)',
+            (session_id, 'crew', 'Q119-TEST-one', T0, T0 + 1))
+        self.conn.execute(
+            'INSERT INTO voice_requests (actor_id,client_request_id,operation,fingerprint,response,recorded_at) '
+            'VALUES (?,?,?,?,?,?)',
+            ('crew', 'voice-delete-test', 'start', 'fingerprint',
+             json.dumps({'session': {'id': session_id}}), T0 + 1))
+        self.conn.execute(
+            'INSERT INTO voice_revisions (session_id,version,kind,recorded_at,before_fields,after_fields,'
+            'before_metadata,after_metadata,warnings) VALUES (?,?,?,?,?,?,?,?,?)',
+            (session_id, 1, 'created', T0, '{}', '{}', '{}', '{}', '[]'))
+        self.conn.execute(
+            'INSERT INTO voice_utterances (session_id,utterance_id,transcript,mode,provider,observed_at,recorded_at) '
+            'VALUES (?,?,?,?,?,?,?)',
+            (session_id, 'utterance-1', '가상 보고', 'dictation', 'browser', T0, T0))
+        self.conn.execute(
+            'INSERT INTO voice_followup_answers (session_id,question_id,answer_status,recorded_at,session_version) '
+            'VALUES (?,?,?,?,?)', (session_id, 'question-1', 'unavailable', T0, 1))
+        from server import enroute_patient_review
+        enroute_patient_review.ensure_schema(self.conn)
+        self.conn.execute(
+            'INSERT INTO enroute_patient_reviews (id,patient_id,hospital_id,actor_id,session_id,session_version,'
+            'patient_version,created_at,proposal,patient_patch) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            ('review-delete-test', 'Q119-TEST-one', 'H1', 'nurse', session_id, 1, 1, T0, '{}', '{}'))
+
+        result = service.delete_transport_case(self.conn, T0 + 2, 'Q119-TEST-one', {'confirm': True})
+
+        self.assertEqual(result, {'patient_id': 'Q119-TEST-one', 'deleted': True})
+        for table, column in (
+            ('patients', 'id'), ('inquiries', 'patient_id'), ('events', 'patient_id'),
+            ('conversations', 'patient_id'), ('chat_messages', 'conversation_id'),
+            ('work_activities', 'patient_id'), ('important_event_receipts', 'event_id'),
+            ('voice_sessions', 'id'), ('voice_revisions', 'session_id'),
+            ('voice_utterances', 'session_id'), ('voice_followup_answers', 'session_id'),
+            ('enroute_patient_reviews', 'patient_id'),
+        ):
+            key = (conversation_id if table == 'chat_messages' else
+                   event_id if table == 'important_event_receipts' else
+                   session_id if column in {'id', 'session_id'} else 'Q119-TEST-one')
+            self.assertEqual(self.conn.execute(
+                f'SELECT COUNT(*) FROM {table} WHERE {column}=?', (key,)).fetchone()[0], 0, table)
+        self.assertEqual(self.conn.execute(
+            'SELECT COUNT(*) FROM voice_requests WHERE instr(response,?)>0', (session_id,)).fetchone()[0], 0)
+        self.assertEqual(self.code(service.patient_view, self.conn, 'Q119-TEST-one', T0 + 2), 'NOT_FOUND')
+        survivor = {case['id']: case['case_number'] for case in transporter_registry.cases(self.conn)}
+        self.assertEqual(survivor, {'Q119-TEST-two': 2})
+        self.patient('Q119-TEST-three', now=T0 + 3, reporter_role='transporter')
+        updated = {case['id']: case['case_number'] for case in transporter_registry.cases(self.conn)}
+        self.assertEqual(updated, {'Q119-TEST-two': 2, 'Q119-TEST-three': 3})
+
+    def test_transport_case_delete_requires_confirmation_and_preserves_active_or_audited_cases(self):
+        self.patient('Q119-TEST-active', reporter_role='transporter')
+        self.assertEqual(self.code(service.delete_transport_case, self.conn, T0, 'Q119-TEST-active', {}),
+                         'CONFIRM_REQUIRED')
+        self.conn.execute("UPDATE patients SET state='IN_TRANSIT' WHERE id='Q119-TEST-active'")
+        self.assertEqual(self.code(service.delete_transport_case, self.conn, T0, 'Q119-TEST-active',
+                                   {'confirm': True}), 'ACTIVE_CASE')
+        self.assertIsNotNone(self.conn.execute(
+            'SELECT id FROM patients WHERE id=?', ('Q119-TEST-active',)).fetchone())
+
+        self.patient('Q119-TEST-audited', reporter_role='transporter')
+        self.conn.execute(
+            'INSERT INTO patient_amendments (patient_id,actor_id,client_request_id,recorded_at,reason,from_version,'
+            'to_version,changed_fields,before_data,after_data,affected_hospital_ids,closed_inquiry_ids,request_fingerprint) '
+            'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            ('Q119-TEST-audited', 'crew', 'audit-test', T0, 'verified', 1, 2, '[]', '{}', '{}', '[]', '[]', 'hash'))
+        self.assertEqual(self.code(service.delete_transport_case, self.conn, T0, 'Q119-TEST-audited',
+                                   {'confirm': True}), 'AUDIT_RECORDS')
+        self.assertIsNotNone(self.conn.execute(
+            'SELECT id FROM patients WHERE id=?', ('Q119-TEST-audited',)).fetchone())
 
 
 class InputRules(Base):
@@ -393,7 +501,19 @@ class Http(Base):
             self.assertEqual(call('POST', '/api/patients', base_patient(consent=False))[0], 400)
             status, cand = call('GET', '/api/patients/W1/candidates')
             self.assertEqual(len(cand['candidates']), 3)
-            call('POST', '/api/patients/W1/inquiries', {'hospital_ids': ['H1']})
+            self.assertEqual(call('GET', '/api/hospitals/H1/inquiries')[1]['open'], [])
+            status, automatic = call('POST', '/api/patients/W1/candidates', {})
+            self.assertEqual(status, 200)
+            self.assertEqual(automatic['automatic_inquiry']['hospital_ids'],
+                             [candidate['hospital_id'] for candidate in automatic['candidates']])
+            self.assertEqual(len(automatic['candidates']), 3)
+            retry_status, retry = call('POST', '/api/patients/W1/candidates', {})
+            self.assertEqual(retry_status, 200)
+            self.assertTrue(retry['automatic_inquiry']['already_started'])
+            self.assertEqual(retry['automatic_inquiry']['hospital_ids'],
+                             automatic['automatic_inquiry']['hospital_ids'])
+            for hid in automatic['automatic_inquiry']['hospital_ids']:
+                self.assertEqual(len(call('GET', f'/api/hospitals/{hid}/inquiries')[1]['open']), 1)
             iid = call('GET', '/api/hospitals/H1/inquiries')[1]['open'][0]['id']
             self.assertEqual(call('POST', f'/api/inquiries/{iid}/respond', {'action': 'accept', 'handled_by': 'n'})[0], 200)
             status, view = call('POST', '/api/patients/W1/confirm', {'inquiry_id': iid})

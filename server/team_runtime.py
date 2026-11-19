@@ -257,7 +257,7 @@ class CommonRuntime(AbstractContextManager):
             if self.mode == 'full':
                 from .worker import Worker
                 self.planner = Worker(self.path, estimator, seconds=3)
-                self.inquiry_worker = InquiryWorker(self.path, estimator)
+            self.inquiry_worker = InquiryWorker(self.path, estimator)
             self.runtime.configure('planning', self.planner, enabled=self.planner is not None)
             self.runtime.configure('inquiry', self.inquiry_worker, enabled=self.inquiry_worker is not None)
             for background in (self.planner, self.inquiry_worker):
@@ -283,7 +283,7 @@ class CommonRuntime(AbstractContextManager):
             release=self.release, dependency_environment=self.dependencies,
             database=inspect_database(self.path), workers=self.runtime.snapshot()['workers'],
             links={key:(self.base_url or '')+value for key,value in links.items()},
-            note='메인 음성·이송 진행·병원 검토·추천·중요 알림을 같은 서버와 DB로 제공합니다. 수용·목적지는 담당자가 확정합니다.')
+            note='서버가 적합 후보 병원에 자동 문의하고 회신을 채팅에 표시합니다. 병원 수용과 최종 목적지는 담당자가 확정합니다.')
 
     def close(self):
         # Stop accepting HTTP writes before releasing workers and the DB lease.

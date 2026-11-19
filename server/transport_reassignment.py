@@ -96,6 +96,12 @@ def start_in_transaction(conn, now, pid, policy_name='fixed_3'):
                 batch_size=policy['batch_size'], max_contacts=policy['max_contacts'],
                 deadline_seconds=policy['deadline_seconds'],
                 note='기존 목적지를 유지한 채 대체병원 문의를 시작합니다. 목적지 변경은 별도 판단입니다.')
+    preserved = _restore_prior_acceptances(conn, now, patient)
+    if preserved:
+        service.log(conn, now, 'system', 'transport_inquiry_candidates_preserved', pid,
+                    job['source_hospital_id'], inquiry_ids=[q['id'] for q in preserved],
+                    hospital_ids=[q['hospital_id'] for q in preserved],
+                    note='이전에 수용 가능했던 병원은 확정 후보로 유지하고, 새 미문의 병원 한 곳에 문의합니다.')
     return _job(conn, pid)
 
 
@@ -136,6 +142,39 @@ def _valid_acceptances(conn, now, patient, inquiries):
         [q for q in inquiries if q['hospital_id'] != patient['destination_hospital_id']])
 
 
+def _restore_prior_acceptances(conn, now, patient):
+    """Keep unexpired acceptances cancelled by a prior destination selection usable."""
+    rows = db.rows(conn.execute(
+        "SELECT * FROM inquiries WHERE patient_id=? AND hospital_id!=? AND state='CANCELLED' "
+        "AND reason IN ('다른 병원 확정','목적지 변경') AND responded_at IS NOT NULL AND expires_at IS NOT NULL",
+        (patient['id'], patient['destination_hospital_id'])))
+    restored = []
+    for inquiry in rows:
+        candidate = dict(inquiry, state='ACCEPTED', patient_version=patient['version'])
+        try:
+            service._check_acceptance(conn, now, patient, candidate)
+        except service.ServiceError:
+            continue
+        conn.execute("UPDATE inquiries SET state='ACCEPTED',reason=NULL,patient_version=?,version=version+1 "
+                     "WHERE id=? AND state='CANCELLED'",
+                     (patient['version'], inquiry['id']))
+        if conn.execute('SELECT changes()').fetchone()[0]:
+            restored.append(dict(candidate, version=inquiry['version'] + 1, reason=None))
+    return restored
+
+
+def _available_acceptances(conn, now, patient, episode_inquiries):
+    seen = {q['id'] for q in episode_inquiries}
+    inquiries = list(episode_inquiries)
+    for inquiry in db.rows(conn.execute(
+            "SELECT * FROM inquiries WHERE patient_id=? AND hospital_id!=? AND state='ACCEPTED' "
+            "AND patient_version=? ORDER BY id",
+            (patient['id'], patient['destination_hospital_id'], patient['version']))):
+        if inquiry['id'] not in seen:
+            inquiries.append(inquiry)
+    return _valid_acceptances(conn, now, patient, inquiries)
+
+
 def _current_pending(patient, inquiries):
     return [q for q in inquiries if q['state'] in service.OPEN_INQUIRY and
             q['patient_version'] == patient['version']]
@@ -166,7 +205,7 @@ def view(conn, now, pid):
     out.update(enabled=bool(out['enabled']), policy=_policy(job), latest_decision=latest,
                contacted_count=len(inquiries), contacted_hospital_ids=[q['hospital_id'] for q in inquiries],
                pending_count=len(_current_pending(patient, inquiries)),
-               valid_accepted_inquiry_ids=_valid_acceptances(conn, now, patient, inquiries),
+               valid_accepted_inquiry_ids=_available_acceptances(conn, now, patient, inquiries),
                position_ready=_position_ready(patient, now),
                position_max_age_seconds=POSITION_MAX_AGE_SECONDS,
                note='대체병원 수용 회신 후 담당자가 목적지를 변경합니다. 현재 목적지는 자동으로 바꾸지 않습니다.')
@@ -249,8 +288,9 @@ def _capture(conn, now, pid):
             stop_in_transaction(conn, now, pid, '조정 요청이 종료되거나 기존 이송 상태가 변경됐습니다.')
             return None, True
         inquiries = _episode_inquiries(conn, job)
-        accepted = _valid_acceptances(conn, now, patient, inquiries)
-        if accepted:
+        episode_acceptances = _valid_acceptances(conn, now, patient, inquiries)
+        accepted = _available_acceptances(conn, now, patient, inquiries)
+        if episode_acceptances or (job['round_no'] > 0 and accepted):
             return None, _ready(conn, now, job, accepted)
         limited = _limits(conn, now, job, patient, inquiries)
         if limited is not None:
@@ -295,8 +335,9 @@ def _apply(conn, now, snapshot, candidates, ledger):
         if not matches:
             return False
         inquiries = _episode_inquiries(conn, job)
-        accepted = _valid_acceptances(conn, now, patient, inquiries)
-        if accepted:
+        episode_acceptances = _valid_acceptances(conn, now, patient, inquiries)
+        accepted = _available_acceptances(conn, now, patient, inquiries)
+        if episode_acceptances or (job['round_no'] > 0 and accepted):
             return _ready(conn, now, job, accepted)
         limited = _limits(conn, now, job, patient, inquiries)
         if limited is not None:
@@ -305,7 +346,8 @@ def _apply(conn, now, snapshot, candidates, ledger):
         if not _position_ready(patient, now):
             return _update_wait(conn, now, job, min(now + READY_POLL_SECONDS, job['deadline_at']),
                                 'AWAITING_POSITION', '대체병원 탐색에 사용할 최신 위치를 입력해주세요.')
-        contacted = {q['hospital_id'] for q in inquiries}
+        contacted = {row['hospital_id'] for row in conn.execute(
+            'SELECT hospital_id FROM inquiries WHERE patient_id=?', (patient['id'],))}
         eligible = [c for c in candidates['candidates']
                     if c['hospital_id'] != job['source_hospital_id'] and
                     inquiry_workflow._eligible_now(conn, now, patient, c['hospital_id'])]
@@ -317,7 +359,9 @@ def _apply(conn, now, snapshot, candidates, ledger):
                        if q['hospital'] in travel and q['hospital'] in current_pending]
         decision = inquiry_policies.decide(policy['name'], now=now, candidates=remaining,
                     observations=ledger['observations'], pending=ledger['pending'],
-                    patient_pending=own_pending, max_new=policy['max_contacts'] - len(contacted),
+                    patient_pending=own_pending,
+                    max_new=min(1, policy['max_contacts'] - len(inquiries)) if not inquiries
+                        else policy['max_contacts'] - len(inquiries),
                     last_contact_at=max((q['last_sent_at'] for q in inquiries if q['last_sent_at'] <= now),
                                         default=None))
         _record_decision(conn, now, job, policy, decision)

@@ -13,26 +13,63 @@
   const $ = name => document.getElementById('transport-' + name);
   const root = document.getElementById('transport-workspace');
   const idPattern = /^Q119-TEST-[A-Za-z0-9-]{1,80}$/;
+  const activePatientKey = 'quick119.activeTransportPatientId';
+  const pendingCreationKey = 'quick119.pendingTransportCreation';
+  const speechPreferenceKey = 'quick119.transportTts';
+  function localStore() {
+    try { return window.localStorage; } catch { return null; }
+  }
+  function savedPatientId() {
+    const value = localStore()?.getItem(activePatientKey);
+    return typeof value === 'string' && idPattern.test(value) ? value : null;
+  }
+  function savePatientId(value) {
+    try { localStore()?.setItem(activePatientKey, value); } catch {}
+  }
+  function clearSavedPatientId() {
+    try { localStore()?.removeItem(activePatientKey); } catch {}
+  }
+  function readPendingCreation() {
+    try {
+      const value = JSON.parse(localStore()?.getItem(pendingCreationKey) || 'null');
+      if (value?.reporter_role === 'transporter' && value?.consent === true
+          && idPattern.test(value?.id || '') && value?.extra?.synthetic_fixture === true
+          && typeof value?.extra?.creation_token === 'string') return value;
+    } catch {}
+    return null;
+  }
+  function storePendingCreation(value) {
+    try { localStore()?.setItem(pendingCreationKey, JSON.stringify(value)); } catch {}
+  }
+  function clearPendingCreation() {
+    try { localStore()?.removeItem(pendingCreationKey); } catch {}
+  }
+  function readSpeechPreference() {
+    try { return localStore()?.getItem(speechPreferenceKey) !== 'off'; } catch { return true; }
+  }
   const seoulIdentity = hospital => hospital?.source_ids?.identity_source === 'seoul_public';
   let seoulOrigin = null;
   const intakeOrigin = () => seoulOrigin || (hospitals.length ? {lat: 35.1595, lon: 126.8526} : null);
-  let pid = null, creation = null, hospitals = [], snapshot = null;
+  let pid = null, creation = null, hospitals = [], patientCases = [], snapshot = null;
   let eventCursor = 0, messageCursor = 0, epoch = 0, timer = null, pollTask = null;
   let suspended = document.hidden, operation = false, sending = false, fresh = false;
+  let patientListLoaded = false, patientListFailed = false, bootstrapTask = null;
   let initialRead = true, catchingUp = false, newWelcome = false, pending = null, voiceListening = false, hospitalTask = null;
   let candidates = null, searchRevision = null, reviewUI = null, intake = null;
   let recognition = null;
-  let speechEnabled = false, speechAudio = null, speechAbort = null, finishAudio = null;
+  let speechEnabled = readSpeechPreference(), speechAudio = null, speechAbort = null, finishAudio = null;
+  let speechAudioReady = false;
   let speechGeneration = 0, speechBusy = false;
   let finishDevice = null;
   const consideredSpeech = new Set(), speechQueue = [];
   const cloudSpeech = root.dataset.ttsCloud === 'enabled';
-  // Read the opening question, intake replies, edit notices, and hospital inquiry/transport status changes.
-  // Automatic-workflow, policy, monitor, and position bookkeeping stays silent.
+  // Routine workflow bookkeeping stays silent. Patient changes, clinical questions, replies and transitions are spoken.
   const spokenNotices = new Set(['patient_updated', 'patient_information_amended',
-    'inquiry_sent', 'inquiry_created', 'inquiry_retried', 'inquiry_responded', 'inquiry_expired', 'inquiry_cancelled', 'inquiry_question',
+    'inquiry_responded', 'inquiry_question',
     'destination_confirmed', 'destination_changed', 'departed', 'adjustment_needed', 'hospital_keeps',
-    'transport_recheck_required', 'transport_recheck_acknowledged', 'transport_alternative_requested',
+    'transport_inquiry_started', 'transport_inquiry_candidates_preserved',
+    'transport_inquiry_ready', 'transport_inquiry_exhausted', 'transport_recheck_required',
+    'transport_alternative_requested',
     'arrival_confirmed', 'patient_cancelled']);
   // 10 ms of silence played inside the toggle tap so later audio may start without a gesture (iOS/Android).
   const silentWav = 'data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -63,16 +100,16 @@
       window.speechSynthesis.cancel();
     }
   }
-  function blockedSpeech() {
-    speechQueue.length = 0;
-    speechEnabled = false; $('tts-toggle').setAttribute('aria-pressed', 'false');
-    speechStatus('자동 재생이 차단됐습니다. 스피커 버튼을 다시 눌러 활성화해 주세요.', true);
+  function blockedSpeech(text) {
+    speechAudioReady = false;
+    if (text) speechQueue.unshift(text);
+    speechStatus('화면을 한 번 터치하면 시스템 메시지 낭독이 시작됩니다.');
   }
   function speak(text) {
-    if (!speechEnabled || !active() || !chatVisible() || voiceListening
+    if (!speechEnabled || !active() || voiceListening
         || typeof text !== 'string' || !text.trim()) return;
     speechQueue.push(text.trim());
-    if (!speechBusy) drainSpeech();
+    if (speechAudioReady && !speechBusy) drainSpeech();
   }
   function readSystem(id, text, live) {
     if (consideredSpeech.has(id)) return;
@@ -83,9 +120,15 @@
     speechBusy = true;
     const generation = speechGeneration;
     while (speechQueue.length && generation === speechGeneration) {
+      if (!speechAudioReady) {
+        speechBusy = false;
+        speechStatus('화면을 한 번 터치하면 시스템 메시지 낭독이 시작됩니다.');
+        return;
+      }
       const text = speechQueue.shift();
       const played = serverSpeech() && await speakServer(text, generation);
       if (!played && generation === speechGeneration) await speakDevice(text);
+      if (!speechAudioReady) { speechBusy = false; return; }
     }
     if (generation === speechGeneration) speechBusy = false;
   }
@@ -111,7 +154,7 @@
       return true;
     } catch (error) {
       if (generation !== speechGeneration) return true;
-      if (error?.name === 'NotAllowedError') { blockedSpeech(); return true; }
+      if (error?.name === 'NotAllowedError') { blockedSpeech(text); return true; }
       return false;
     } finally {
       if (finishAudio === done) finishAudio = null;
@@ -138,7 +181,7 @@
         finishDevice = null;
         utterance.onend = utterance.onerror = null;
         const error = event?.error;
-        if (error === 'not-allowed') blockedSpeech();
+        if (error === 'not-allowed') blockedSpeech(text);
         else if (error === 'language-unavailable' || error === 'voice-unavailable') speechStatus(missingKoreanVoice, true);
         else if (error && error !== 'canceled' && error !== 'interrupted') speechStatus('시스템 메시지를 읽지 못했습니다.', true);
         resolve();
@@ -155,16 +198,46 @@
       speechStatus('기기 한국어 음성을 사용할 수 있습니다.');
     }
   }
+  function unlockSpeech() {
+    if (!speechEnabled || speechAudioReady) return;
+    if (serverSpeech()) {
+      speechAudio ||= new window.Audio();
+      speechAudio.src = silentWav;
+      try {
+        const play = speechAudio.play();
+        Promise.resolve(play).then(() => {
+          speechAudio.pause();
+          speechAudio.currentTime = 0;
+          speechAudioReady = true;
+          if (speechQueue.length && !speechBusy) drainSpeech();
+        }).catch(() => {
+          speechStatus('화면을 한 번 더 터치하면 시스템 메시지 낭독이 시작됩니다.');
+        });
+      } catch {
+        speechStatus('화면을 한 번 더 터치하면 시스템 메시지 낭독이 시작됩니다.');
+      }
+    } else if (deviceSpeech()) {
+      try {
+        const unlock = new window.SpeechSynthesisUtterance('');
+        unlock.lang = 'ko-KR';
+        window.speechSynthesis.speak(unlock);
+        speechAudioReady = true;
+        if (speechQueue.length && !speechBusy) drainSpeech();
+      } catch {
+        speechStatus('기기에서 시스템 메시지 낭독을 시작하지 못했습니다.', true);
+      }
+    }
+  }
+  document.addEventListener('pointerdown', unlockSpeech, {capture: true});
   $('tts-toggle').addEventListener('click', () => {
     speechEnabled = !speechEnabled;
+    try { localStore()?.setItem(speechPreferenceKey, speechEnabled ? 'on' : 'off'); } catch {}
     $('tts-toggle').setAttribute('aria-pressed', String(speechEnabled));
     if (!speechEnabled) {
       stopSpeech();
       speechStatus('시스템 메시지 낭독이 꺼져 있습니다.');
     } else if (serverSpeech()) {
-      speechAudio ||= new window.Audio();
-      speechAudio.src = silentWav;
-      try { Promise.resolve(speechAudio.play()).catch(() => {}); } catch {}
+      unlockSpeech();
       speechStatus('새 시스템 메시지를 읽습니다.');
     } else if (!deviceSpeech()) {
       speechStatus('이 브라우저는 시스템 메시지 낭독을 지원하지 않습니다.', true);
@@ -180,7 +253,11 @@
   if (window.speechSynthesis?.addEventListener) {
     window.speechSynthesis.addEventListener('voiceschanged', updateSpeechVoices);
   } else if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = updateSpeechVoices;
-  speechStatus('시스템 메시지 낭독이 꺼져 있습니다.');
+  $('tts-toggle').setAttribute('aria-pressed', String(speechEnabled));
+  speechStatus(speechEnabled ? '새 시스템 메시지를 읽습니다.' : '시스템 메시지 낭독이 꺼져 있습니다.');
+  if (speechEnabled && !serverSpeech() && !deviceSpeech()) {
+    speechStatus('이 브라우저는 시스템 메시지 낭독을 지원하지 않습니다.', true);
+  }
   function intakeEnabled() {
     return intake && snapshot?.intake_commands && !reviewState().locked;
   }
@@ -188,12 +265,22 @@
   let draftSession;
   const items = new Map(), unread = new Set(), controllers = new Set();
   // Presentation only: rendered order, map-pin signature and candidate cards (never sent anywhere).
-  let renderedIds = [], candidateSignature = '[]', caseOrigin = null;
+  let renderedEntryKeys = [], candidateSignature = '[]', hospitalRenderSignature = '', caseOrigin = null;
   const candidateCards = new Map();
   const inquiryLabels = {PENDING: '수용 문의 중', CHECKING: '의료진 확인 중', ACCEPTED: '수용 가능 응답', CONFIRMED: '목적지 확정',
     DECLINED: '수용 불가', EXPIRED: '수용 응답 만료', CANCELLED: '문의 종료'};
   const inquiryPriority = {CONFIRMED: 0, ACCEPTED: 1};
-  const openInquiryStates = new Set(['PENDING', 'CHECKING', 'ACCEPTED', 'CONFIRMED']);
+  const inquiryNoticeTypes = new Set(['inquiry_sent', 'inquiry_created', 'inquiry_retried',
+    'inquiry_responded', 'inquiry_expired', 'inquiry_cancelled', 'inquiry_closed',
+    'inquiry_status_changed', 'inquiry_workflow_batch', 'inquiry_workflow_ready',
+    'inquiry_workflow_waiting', 'inquiry_workflow_exhausted', 'transport_inquiry_batch',
+    'transport_inquiry_decision', 'transport_inquiry_waiting']);
+  const adjustmentStartTypes = new Set(['adjustment_needed', 'transport_alternative_requested']);
+  const adjustmentEndTypes = new Set(['destination_changed', 'hospital_keeps', 'patient_cancelled']);
+  const outcomeTypes = new Set(['destination_changed', 'destination_confirmed', 'departed',
+    'arrival_confirmed', 'patient_cancelled', 'hospital_keeps']);
+  const protectedNoticeTypes = new Set(['patient_updated', 'patient_information_amended', 'inquiry_question',
+    'enroute_patient_change_requested', 'enroute_patient_change_decided']);
   function el(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -220,6 +307,77 @@
       }
       return body;
     } finally { clearTimeout(timeout); controllers.delete(controller); }
+  }
+  async function loadTransportPatients() {
+    const result = await api('/api/transport/patients');
+    if (!Array.isArray(result.patients) || result.patients.some(patient => !idPattern.test(patient?.id || ''))) {
+      throw new Error('환자 접수 목록 형식이 올바르지 않습니다.');
+    }
+    patientCases = result.patients;
+    patientListLoaded = true;
+    patientListFailed = false;
+  }
+  function setCurrentPatient(id) {
+    pid = id;
+    savePatientId(id);
+    const url = new URL(location.href);
+    url.searchParams.delete('new');
+    url.searchParams.set('pid', id);
+    history.replaceState(null, '', url);
+  }
+  async function restoreTransport() {
+    if (invalidRestored) return;
+    if (!patientListLoaded) {
+      patientListFailed = false;
+      controls();
+      await loadTransportPatients();
+    }
+    if (pid) {
+      if (!patientCases.some(patient => patient.id === pid)) {
+        pid = null;
+        clearSavedPatientId();
+        window.location.assign('/patients');
+        return;
+      }
+      savePatientId(pid);
+      await pollNow();
+      return;
+    }
+    const pendingCreation = readPendingCreation();
+    if (pendingCreation && patientCases.some(patient => patient.id === pendingCreation.id)) {
+      clearPendingCreation();
+      setCurrentPatient(pendingCreation.id);
+      await pollNow();
+      return;
+    }
+    if (pendingCreation) {
+      creation = pendingCreation;
+      await runOperation(createCase);
+      return;
+    }
+    if (new URLSearchParams(location.search).get('new') === '1') {
+      await runOperation(createCase);
+      return;
+    }
+    const remembered = savedPatientId();
+    const patient = patientCases.find(item => item.id === remembered && item.active)
+      || patientCases.find(item => item.active)
+      || patientCases.find(item => item.id === remembered);
+    if (patient) {
+      setCurrentPatient(patient.id);
+      await pollNow();
+    } else {
+      controls();
+    }
+  }
+  function bootstrapTransport() {
+    if (bootstrapTask) return bootstrapTask;
+    bootstrapTask = restoreTransport().catch(failure => {
+      patientListFailed = true;
+      error(`접수 기록을 불러오지 못했습니다: ${failure.message}`);
+      controls();
+    }).finally(() => { bootstrapTask = null; });
+    return bootstrapTask;
   }
   function abortRequests() { controllers.forEach(controller => controller.abort()); }
   function badge() {
@@ -253,6 +411,127 @@
       el('p', 'transport-bubble', item.text || item.body || ''), el('small', 'transport-time', clock(item.at)));
     return node;
   }
+  function isAlternativeAcceptance(inquiry) {
+    const currentHospital = snapshot?.active_hospital_session?.hospital_id;
+    return !!currentHospital && inquiry?.state === 'ACCEPTED' && inquiry.usable
+      && inquiry.hospital_id !== currentHospital;
+  }
+  function isSystemNotice(item) {
+    return item.kind === 'system' && item.sender_role === 'system' && !!item.type
+      && !protectedNoticeTypes.has(item.type);
+  }
+  function eventOrder(item) {
+    const value = Number(item.order_key?.[0]);
+    return Number.isFinite(value) ? value : Number(item.at) || 0;
+  }
+  function latestOpenAdjustmentStart() {
+    const lifecycle = [...items.values()].filter(item =>
+      adjustmentStartTypes.has(item.type) || adjustmentEndTypes.has(item.type));
+    const latestStart = Math.max(0, ...lifecycle.filter(item => adjustmentStartTypes.has(item.type)).map(eventOrder));
+    const latestEnd = Math.max(0, ...lifecycle.filter(item => adjustmentEndTypes.has(item.type)).map(eventOrder));
+    return latestStart > latestEnd ? latestStart : 0;
+  }
+  function adjustmentIsOpen() {
+    return latestOpenAdjustmentStart() > 0;
+  }
+  function inquirySummary(group) {
+    const seen = new Set();
+    const updates = [];
+    for (const item of group) {
+      const hospitalId = item.hospital_id;
+      if (!hospitalId || seen.has(hospitalId)) continue;
+      seen.add(hospitalId);
+      const inquiry = snapshot?.inquiries?.find(entry => entry.hospital_id === hospitalId);
+      const name = inquiry?.hospital_name || item.hospital_name || hospitalId;
+      const status = inquiry ? inquiryLabels[inquiry.state] || inquiry.state : '';
+      updates.push(status ? `${name} ${status}` : item.text);
+    }
+    if (!updates.length) return group[group.length - 1]?.text || '병원 문의 진행 상황이 갱신됐습니다.';
+    const shown = updates.slice(0, 4);
+    if (updates.length > shown.length) shown.push(`외 ${updates.length - shown.length}곳`);
+    return `${group.some(item => adjustmentStartTypes.has(item.type)) ? '대체병원 문의' : '병원 문의'}: ${shown.join(' · ')}`;
+  }
+  function noticeHeadline(group) {
+    const activeAdjustmentStart = latestOpenAdjustmentStart();
+    if (activeAdjustmentStart) {
+      const activeEvents = group.filter(item => eventOrder(item) >= activeAdjustmentStart);
+      if (activeEvents.length) {
+        const hasCandidate = (snapshot?.inquiries || []).some(isAlternativeAcceptance);
+        if (hasCandidate || activeEvents.some(item => item.type === 'transport_inquiry_ready')) {
+          return '수용 가능한 대체병원 확보 · 새 목적지를 확정하세요';
+        }
+        if (activeEvents.some(item => item.type === 'transport_inquiry_exhausted')) {
+          const exhausted = activeEvents.filter(item => item.type === 'transport_inquiry_exhausted');
+          return exhausted[exhausted.length - 1].text;
+        }
+        if (activeEvents.some(item => inquiryNoticeTypes.has(item.type))) return inquirySummary(activeEvents);
+        return activeEvents[activeEvents.length - 1].text;
+      }
+    }
+    const outcomes = group.filter(item => outcomeTypes.has(item.type));
+    if (outcomes.length) return outcomes[outcomes.length - 1].text;
+    if (group.some(item => item.type === 'transport_inquiry_ready')) {
+      return '수용 가능한 대체병원 확보 · 새 목적지를 확정하세요';
+    }
+    if (group.some(item => item.type === 'transport_inquiry_exhausted')) {
+      return group[group.length - 1].text;
+    }
+    if (group.some(item => inquiryNoticeTypes.has(item.type))) return inquirySummary(group);
+    return group[group.length - 1].text;
+  }
+  function noticeEmphasis(group) {
+    if (group.some(item => outcomeTypes.has(item.type) || item.type === 'transport_inquiry_ready')) return 'decision';
+    if (group.some(item => adjustmentStartTypes.has(item.type))) return 'adjustment';
+    if (group.some(item => item.type === 'transport_recheck_required')) return 'attention';
+    return 'progress';
+  }
+  function renderNoticeGroup(group) {
+    const nodeId = 'transport-notices-' + group[0].id;
+    const signature = JSON.stringify(group.map(item => [item.id, item.text, item.type]));
+    let node = document.getElementById(nodeId);
+    if (!node) {
+      node = el('article', 'tw-system-group');
+      node.id = nodeId;
+      node.dataset.kind = 'notice-group';
+    } else if (node.dataset.signature === signature) return node;
+    const wasOpen = !!node.details?.open;
+    node.dataset.signature = signature;
+    const headline = el('p', 'tw-system-group-headline', noticeHeadline(group));
+    const heading = el('strong', 'tw-system-group-label', '진행 상황');
+    const headingRow = el('div', 'tw-system-group-title');
+    headingRow.append(heading);
+    const reasonNotice = [...group].reverse().find(item => item.type === 'adjustment_needed');
+    const reason = typeof reasonNotice?.data?.note === 'string' ? reasonNotice.data.note.trim() : '';
+    const children = [headingRow, headline];
+    if (reason) children.push(el('p', 'tw-system-group-reason', `조정 사유: ${reason}`));
+    const details = el('details', 'tw-system-group-details');
+    details.open = wasOpen;
+    const summary = el('summary', '', `자세히 ${group.length}건`);
+    const list = el('ol', 'tw-system-group-events');
+    for (const item of group) {
+      const row = el('li', '', item.text || '');
+      if (item.at) row.append(el('time', '', clock(item.at)));
+      list.append(row);
+    }
+    details.append(summary, list);
+    children.push(details);
+    node.dataset.emphasis = noticeEmphasis(group);
+    node.replaceChildren(...children);
+    node.details = details;
+    return node;
+  }
+  function changeDestinationButton(inquiry, hospital, label = '새 목적지로 확정') {
+    const button = el('button', 'tw-btn tw-btn-confirm', label); button.type = 'button';
+    button.dataset.transportConfirm = String(inquiry.id); button.dataset.hospitalId = inquiry.hospital_id;
+    button.setAttribute('aria-label', `${inquiry.hospital_name || hospital?.name || inquiry.hospital_id}(으)로 ${label}`);
+    button.addEventListener('click', () => runOperation(async () => {
+      const currentHospital = snapshot?.active_hospital_session?.hospital_id;
+      const action = currentHospital && currentHospital !== inquiry.hospital_id ? '/change-destination' : '/confirm';
+      await api(path() + action, {inquiry_id: inquiry.id}); await pollNow();
+      if (hospital) selectRoute(hospital);
+    }));
+    return button;
+  }
   function renderMessages() {
     const follow = atBottom();
     const scrollTop = $('messages').scrollTop;
@@ -260,28 +539,45 @@
       for (let n = 0; n < 4; n++) { const diff = (a.order_key[n] ?? 0) - (b.order_key[n] ?? 0); if (diff) return diff; }
       return 0;
     });
-    // Reordering streams must not duplicate nodes or destroy the draft/focus. Only a new tail is appended,
-    // so existing bubbles are not moved (moving would replay their entrance animation).
-    const ids = ordered.map(item => item.id);
-    const kept = renderedIds.length <= ids.length && renderedIds.every((id, index) => ids[index] === id) ? renderedIds.length : 0;
+    const entries = [];
+    for (let index = 0; index < ordered.length;) {
+      if (isSystemNotice(ordered[index])) {
+        const group = [];
+        while (index < ordered.length && isSystemNotice(ordered[index])) group.push(ordered[index++]);
+        entries.push({key: 'notice:' + group[0].id, group});
+      } else {
+        entries.push({key: 'item:' + ordered[index].id, item: ordered[index++]});
+      }
+    }
+    // Keep existing nodes in place; a run of notices updates its summary in place as events arrive.
+    const keys = entries.map(entry => entry.key);
+    const kept = renderedEntryKeys.length <= keys.length && renderedEntryKeys.every((key, index) => keys[index] === key)
+      ? renderedEntryKeys.length : 0;
     let previous = null;
-    ordered.forEach((item, index) => {
-      const node = document.getElementById('transport-item-' + item.id) || messageNode(item);
-      const group = node.dataset.kind === 'notice' ? null : `${item.sender_role}|${item.sender_name || ''}`;
-      node.dataset.cont = String(!!group && previous?.group === group && item.at - previous.at < 300);
-      previous = {group, at: item.at};
-      if (index >= kept) $('messages').append(node);
+    entries.forEach((entry, index) => {
+      const node = entry.group
+        ? renderNoticeGroup(entry.group)
+        : (document.getElementById('transport-item-' + entry.item.id) || messageNode(entry.item));
+      if (entry.item) {
+        const group = `${entry.item.sender_role}|${entry.item.sender_name || ''}`;
+        node.dataset.cont = String(!!group && previous?.group === group && entry.item.at - previous.at < 300);
+        previous = {group, at: entry.item.at};
+      } else previous = null;
+      const parent = node.parentNode || node.parent;
+      if (index >= kept || parent !== $('messages')) $('messages').append(node);
     });
-    renderedIds = ids;
+    renderedEntryKeys = keys;
     if (chatVisible() && follow) { $('messages').scrollTop = $('messages').scrollHeight; markRead(); }
     else $('messages').scrollTop = scrollTop;
   }
   function merge(incoming, countNew, live = false) {
     const following = chatVisible() && atBottom();
+    const inquiryResponses = [];
     for (const item of incoming) {
       if (items.has(item.id)) continue;
       if (item.kind === 'system' && item.sender_role === 'system') {
         if (item.type === 'crew_intake_reply') readSystem(item.id, item.data?.reply, live);
+        else if (item.type === 'inquiry_responded') inquiryResponses.push(item);
         else if (spokenNotices.has(item.type)) readSystem(item.id, item.text, live);
       }
       if (item.kind === 'system' && hiddenSystemEvents.has(item.type)) continue;
@@ -295,6 +591,16 @@
         items.set(item.id, {...item, type: null, text: item.data.reply, order_key: [...item.order_key, 1]});
       } else items.set(item.id, item);
       if (countNew && item.kind === 'message' && item.sender_role === 'hospital' && !following) unread.add(item.id);
+    }
+    if (inquiryResponses.length) {
+      const text = inquiryResponses.map(item => {
+        const name = item.hospital_name || item.hospital_id || '병원';
+        const action = item.data?.action;
+        const status = action === 'accept' ? '수용 가능' : action === 'decline' ? '수용 불가'
+          : action === 'checking' ? '확인 중' : '응답 등록';
+        return `${name} ${status}`;
+      }).join(' · ');
+      readSystem('inquiry-responses:' + inquiryResponses.map(item => item.id).join(','), `병원 회신: ${text}`, live);
     }
     renderMessages(); badge();
   }
@@ -367,9 +673,12 @@
       node.dataset.state = index < step ? 'done' : index === step ? 'current' : 'todo';
       if (index === step) node.setAttribute('aria-current', 'step'); else node.removeAttribute('aria-current');
     });
-    if ($('next-title')) $('next-title').textContent = name === 'candidates' ? '후보 병원에 수용 문의하세요'
+    const inquiriesStarted = (snapshot?.inquiries || []).length > 0;
+    if ($('next-title')) $('next-title').textContent = name === 'candidates'
+      ? inquiriesStarted ? '상위 후보 병원에 자동 문의했습니다' : '서버가 후보 병원에 자동 문의합니다'
       : name === 'review' ? '보고 완료 · 병원 탐색' : '병원 탐색';
-    if ($('start-search')) $('start-search').textContent = name === 'candidates' ? '정보 확인 후 다시 탐색' : '병원 탐색 시작';
+    if ($('start-search')) $('start-search').textContent = name === 'candidates'
+      ? inquiriesStarted ? '자동 문의 진행 중' : '병원 탐색 시작' : '병원 탐색 시작';
   }
   let contactSession;
   function showHospitalContact() {
@@ -398,7 +707,10 @@
     if ($('hospital-contact') && (!fresh || !active() || contactSession !== sessionId())) $('hospital-contact').hidden = true;
     const staleDraft = draftSession !== undefined && draftSession !== sessionId() && !!$('message').value.trim();
     $('new-case').hidden = !!pid || operation;
-    $('new-case').disabled = operation || !!pid || sending || suspended || invalidRestored;
+    $('new-case').textContent = patientListLoaded ? '새 접수 시작'
+      : patientListFailed ? '접수 목록 다시 확인' : '접수 기록 불러오는 중…';
+    $('new-case').disabled = operation || !!pid || sending || suspended || invalidRestored
+      || (!patientListLoaded && !patientListFailed);
     $('message').disabled = !canDraft() || sending || operation || !!pending || voiceListening;
     $('send').disabled = sending || operation || voiceListening || !active() || (!pending && (!canCompose() || staleDraft));
     $('send').textContent = sending ? '확인 중…' : pending ? '재시도' : '보내기';
@@ -411,7 +723,10 @@
     const depart = $('depart');
     depart.hidden = !sessionId() || snapshot?.conversation?.state !== 'OPEN' || snapshot.patient?.state !== 'CONFIRMED';
     depart.disabled = depart.hidden || !active() || !fresh || operation || sending || voiceListening;
-    let state = !pid ? operation ? '접수 채팅을 준비하고 있습니다.' : '접수 연결을 확인하지 못했습니다. 다시 시도해 주세요.'
+    let state = !pid ? operation ? '접수 채팅을 준비하고 있습니다.'
+      : patientListLoaded ? '환자를 선택하거나 새 접수를 시작해 주세요.'
+      : patientListFailed ? '접수 기록을 불러오지 못했습니다. 다시 시도해 주세요.'
+      : '접수 기록을 확인하고 있습니다.'
       : suspended ? '앱 백그라운드 · 복귀 시 대화를 다시 조회합니다.'
       : !fresh ? '접수 대화 확인 중 · 네트워크를 확인하세요.'
       : snapshot?.conversation?.state === 'CLOSED' ? '이송 대화 종료 · 이전 기록을 조회할 수 있습니다.'
@@ -422,12 +737,11 @@
     // Short enough for one line beside the mic and send buttons; the label above names the recipient.
     $('message').placeholder = hospital ? '병원에 메시지 입력' : '환자 상태 입력';
     renderParticipants();
-    // A hospital that already has an open inquiry cannot be asked twice from its card.
-    const asked = new Set((snapshot?.inquiries || []).filter(q => openInquiryStates.has(q.state)).map(q => q.hospital_id));
-    document.querySelectorAll('[data-transport-confirm],[data-transport-inquire]').forEach(button => {
-      button.disabled = operation || sending || !active() || !fresh || !!snapshot?.active_hospital_session || snapshot?.conversation?.state === 'CLOSED'
-        || (!!button.dataset.transportInquire && (!searchedCurrent() || !!pending || voiceListening || !!$('message').value.trim()
-          || asked.has(button.dataset.transportInquire)));
+    document.querySelectorAll('[data-transport-confirm]').forEach(button => {
+      button.disabled = operation || sending || !active() || !fresh
+        || (!!snapshot?.active_hospital_session
+          && snapshot.active_hospital_session.hospital_id === button.dataset.hospitalId)
+        || snapshot?.conversation?.state === 'CLOSED';
     });
     renderStage(!pid ? (operation ? 'pending' : 'error') : suspended ? 'paused'
       : !fresh ? 'pending' : snapshot?.conversation?.state === 'CLOSED' ? 'closed' : 'live');
@@ -452,9 +766,27 @@
     if (seoulIdentity(identity)) detail.demoOrigin = seoulOrigin;
     document.dispatchEvent(new CustomEvent('quick119:route-select', {detail}));
   }
+  function displayedHospitals() {
+    const displayed = [...(candidates || [])], ids = new Set(displayed.map(hospital => hospital.id));
+    for (const inquiry of snapshot?.inquiries || []) {
+      if (!isAlternativeAcceptance(inquiry) || ids.has(inquiry.hospital_id)) continue;
+      const hospital = hospitals.find(item => item.id === inquiry.hospital_id);
+      if (hospital) { displayed.push({...hospital, hospital_id: hospital.id, id: hospital.id}); ids.add(hospital.id); }
+    }
+    return displayed;
+  }
   function renderHospitals() {
+    const displayed = displayedHospitals();
+    const signature = JSON.stringify([snapshot?.active_hospital_session?.hospital_id || '',
+      displayed.map(hospital => {
+        const inquiry = (snapshot?.inquiries || []).find(q => q.hospital_id === hospital.id);
+        return [hospital.id, hospital.lat, hospital.lon, hospital.travel?.duration_seconds,
+          inquiry?.state || '', !!inquiry?.usable];
+      })]);
+    if (signature === hospitalRenderSignature) { renderCandidateStates(); return; }
+    hospitalRenderSignature = signature;
     $('hospitals').replaceChildren(); candidateCards.clear();
-    (candidates || []).forEach((hospital, index) => {
+    displayed.forEach((hospital, index) => {
       const card = el('article', 'transport-hospital'); card.id = 'transport-cand-' + hospital.id;
       card.dataset.candidateId = hospital.id;
       const rank = el('span', 'tw-rank', String(index + 1)); rank.setAttribute('aria-hidden', 'true');
@@ -480,21 +812,12 @@
       const route = el('button', 'tw-btn tw-btn-ghost tw-cand-route', '경로'); route.type = 'button';
       route.setAttribute('aria-label', `${hospital.name} 경로`);
       route.addEventListener('click', () => selectRoute(hospital));
-      const inquire = el('button', 'tw-btn tw-btn-primary tw-cand-inquire', '수용 문의'); inquire.type = 'button';
-      inquire.setAttribute('aria-label', `${hospital.name} 수용 문의`);
-      inquire.dataset.transportInquire = hospital.id;
-      inquire.addEventListener('click', () => runOperation(async () => {
-        if (!searchedCurrent() || pending || voiceListening || $('message').value.trim()) throw new Error('최신 보고와 환자 정보를 다시 확인한 뒤 문의해 주세요.');
-        if (!await pollNow() || !searchedCurrent()) throw new Error('환자 정보가 변경됐습니다. 다시 최종 확인해 주세요.');
-        await api(path() + '/inquiries', {hospital_ids: [hospital.id]});
-        await pollNow();
-      }));
-      const actions = el('div', 'tw-cand-actions'); actions.append(route, inquire);
+      const actions = el('div', 'tw-cand-actions'); actions.append(route);
       const link = el('a', 'tw-cand-link', '의료진 화면 열기 ↗');
       link.href = '/hospital/?hid=' + encodeURIComponent(hospital.id) + (pid ? '&pid=' + encodeURIComponent(pid) : '');
       link.target = '_blank'; link.rel = 'noopener noreferrer';
       card.append(head, why, actions, link); $('hospitals').append(card);
-      candidateCards.set(hospital.id, {card, state});
+      candidateCards.set(hospital.id, {card, state, actions, route, link, hospital, actionSignature: ''});
     });
     renderCandidateStates();
     announceCandidates();
@@ -503,34 +826,54 @@
   // After confirmation (also after a reload, when candidates are gone) the map sheet offers the destination route.
   function renderDestination() {
     const box = $('destination');
-    if (!box) return;
     const session = snapshot?.active_hospital_session;
     const hospital = session ? hospitals.find(h => h.id === session.hospital_id) : null;
-    box.hidden = !hospital;
-    if (box.dataset.key === (hospital?.id || '')) return;
-    box.dataset.key = hospital?.id || ''; box.replaceChildren();
-    if (!hospital) return;
-    const copy = el('div', 'tw-dest-copy');
-    copy.append(el('span', 'tw-dest-label', '이송 목적지'), el('strong', '', hospital.name));
-    const go = el('button', 'tw-btn tw-btn-cta tw-dest-go', '경로 보기'); go.type = 'button';
-    // No hospital_id on purpose: this card is shown only while no route is displayed (e.g. after a GPS failure),
-    // and car-routes.js ignores a repeat selection of the same hospital_id, which would make this a no-op.
-    go.addEventListener('click', () => selectRoute(hospital, true));
-    const icon = el('span', 'tw-inquiry-icon'); icon.setAttribute('aria-hidden', 'true');
-    box.append(icon, copy, go);
+    if (box) {
+      box.hidden = !hospital;
+      if (box.dataset.key !== (hospital?.id || '')) {
+        box.dataset.key = hospital?.id || ''; box.replaceChildren();
+        if (hospital) {
+          const copy = el('div', 'tw-dest-copy');
+          copy.append(el('span', 'tw-dest-label', '이송 목적지'), el('strong', '', hospital.name));
+          const go = el('button', 'tw-btn tw-btn-cta tw-dest-go', '경로 보기'); go.type = 'button';
+          // No hospital_id on purpose: car-routes.js ignores repeat selection of the same hospital.
+          go.addEventListener('click', () => selectRoute(hospital, true));
+          const icon = el('span', 'tw-inquiry-icon'); icon.setAttribute('aria-hidden', 'true');
+          box.append(icon, copy, go);
+        }
+      }
+    }
+    const current = $('current-destination');
+    if (!current) return;
+    const show = root.dataset.reassignmentActive === 'true' && !!hospital;
+    current.hidden = !show;
+    const key = show ? hospital.id : '';
+    if (current.dataset.key === key) return;
+    current.dataset.key = key; current.replaceChildren();
+    if (!show) return;
+    const copy = el('div', 'tw-current-destination-copy');
+    copy.append(el('span', '', '현재 목적지'), el('strong', '', hospital.name));
+    current.append(el('span', 'tw-inquiry-icon'), copy);
   }
   // Inquiry state also shows on the matching candidate card.
   function renderCandidateStates() {
     const latest = new Map((snapshot?.inquiries || []).map(q => [q.hospital_id, q]));
-    for (const [id, {card, state}] of candidateCards) {
+    for (const [id, entry] of candidateCards) {
+      const {card, state, actions, route, link, hospital} = entry;
       const q = latest.get(id);
       card.dataset.inquiry = q?.state || '';
       state.hidden = !q; state.dataset.state = q?.state || ''; state.textContent = q ? inquiryLabels[q.state] || q.state : '';
+      const actionSignature = isAlternativeAcceptance(q) ? String(q.id) : '';
+      if (actionSignature !== entry.actionSignature) {
+        actions.replaceChildren(route, ...(actionSignature ? [changeDestinationButton(q, hospital,
+          '이 병원으로 목적지 변경 확정')] : []));
+        entry.actionSignature = actionSignature;
+      }
     }
   }
   // Map pins follow the displayed candidates (top 3) and the case's saved location; no request is made.
   function announceCandidates() {
-    const shown = (candidates || []).map((h, index) => ({id: h.id, name: h.name, lat: Number(h.lat), lon: Number(h.lon), rank: index + 1}))
+    const shown = displayedHospitals().map((h, index) => ({id: h.id, name: h.name, lat: Number(h.lat), lon: Number(h.lon), rank: index + 1}))
       .filter(h => Number.isFinite(h.lat) && Number.isFinite(h.lon));
     const signature = JSON.stringify(shown.map(h => [h.id, h.lat, h.lon]));
     if (signature === candidateSignature) return;
@@ -538,10 +881,21 @@
     document.dispatchEvent(new CustomEvent('quick119:candidates', {detail: {origin: shown.length ? caseOrigin : null, hospitals: shown}}));
   }
   function renderInquiries() {
-    const inquiries = [...(snapshot?.inquiries || [])].sort((a, b) =>
+    const allInquiries = snapshot?.inquiries || [];
+    const currentHospital = snapshot?.active_hospital_session?.hospital_id;
+    const alternatives = allInquiries.filter(q => q.hospital_id !== currentHospital
+      && (['PENDING', 'CHECKING'].includes(q.state) || (q.state === 'ACCEPTED' && q.usable)));
+    const reassignmentActive = !!currentHospital && adjustmentIsOpen() && alternatives.length > 0;
+    if (root) root.dataset.reassignmentActive = String(reassignmentActive);
+    const currentDestination = $('current-destination');
+    if (currentDestination) currentDestination.hidden = !reassignmentActive;
+    $('inquiries').setAttribute('aria-label', reassignmentActive
+      ? '현재 목적지와 대체 병원 문의 및 확정' : '수용 문의 및 목적지 확정');
+    const inquiries = [...(reassignmentActive ? alternatives : currentHospital ? [] : allInquiries)].sort((a, b) =>
       (inquiryPriority[a.state] ?? 2) - (inquiryPriority[b.state] ?? 2));
-    const signature = JSON.stringify(inquiries.map(q => [q.id, q.state, q.usable, q.hospital_name || q.hospital_id]));
-    if ($('inquiries').dataset.signature === signature) return;
+    const signature = JSON.stringify([reassignmentActive, snapshot?.patient?.state, currentHospital,
+      inquiries.map(q => [q.id, q.state, q.usable, q.hospital_name || q.hospital_id])]);
+    if ($('inquiries').dataset.signature === signature) { renderDestination(); return; }
     const focusedId = document.activeElement?.dataset.transportConfirm;
     let restoreFocus;
     $('inquiries').dataset.signature = signature; $('inquiries').replaceChildren();
@@ -554,20 +908,16 @@
       copy.append(el('strong', '', name), status);
       row.append(icon, copy);
       if (q.state === 'ACCEPTED' && q.usable) {
-        const confirm = el('button', 'tw-btn tw-btn-confirm', '목적지 확정'); confirm.type = 'button'; confirm.dataset.transportConfirm = q.id;
-        confirm.setAttribute('aria-label', `${name}(으)로 목적지 확정`);
-        confirm.addEventListener('click', () => runOperation(async () => {
-          await api(path() + '/confirm', {inquiry_id: q.id}); await pollNow();
-          const hospital = hospitals.find(h => h.id === q.hospital_id);
-          if (hospital) selectRoute(hospital);
-        }));
+        const changingDestination = isAlternativeAcceptance(q);
+        const confirm = changeDestinationButton(q, hospitals.find(h => h.id === q.hospital_id),
+          changingDestination ? '새 목적지로 확정' : '목적지 확정');
         if (confirm.dataset.transportConfirm === focusedId) restoreFocus = confirm;
         row.append(confirm);
       }
       $('inquiries').append(row);
     }
     restoreFocus?.focus({preventScroll: true});
-    renderCandidateStates();
+    renderHospitals(); renderDestination();
   }
   function schedule() {
     clearTimeout(timer); timer = null;
@@ -597,7 +947,25 @@
         initialRead = false; catchingUp = false; newWelcome = false;
         fresh = true; renderInquiries(); controls(); return true;
       } catch (failure) {
-        if (epoch === ticket.epoch && active()) { fresh = false; error(failure.name === 'AbortError' ? '대화 조회 시간이 초과됐습니다. 다시 조회합니다.' : failure.message); controls(); }
+        if (epoch === ticket.epoch && active()) {
+          if (failure.status === 404) {
+            try { await loadTransportPatients(); }
+            catch (listFailure) {
+              fresh = false;
+              error(`대화 기록이 없고 접수 목록도 새로 확인하지 못했습니다: ${listFailure.message}`);
+              controls();
+              return false;
+            }
+            if (epoch === ticket.epoch && pid === ticket.pid && !patientCases.some(patient => patient.id === ticket.pid)) {
+              pid = null; clearSavedPatientId(); clearPendingCreation(); stopSpeech();
+              window.location.assign('/patients');
+              return false;
+            }
+          }
+          fresh = false;
+          error(failure.name === 'AbortError' ? '대화 조회 시간이 초과됐습니다. 다시 조회합니다.' : failure.message);
+          controls();
+        }
         return false;
       } finally {
         if (pollTask === ticket) { pollTask = null; schedule(); }
@@ -626,6 +994,7 @@
           seoulOrigin = null;
         }
         hospitals = list;
+        hospitalRenderSignature = '';
         renderHospitals();
         $('reload-hospitals').hidden = true;
       } catch (failure) {
@@ -658,13 +1027,14 @@
       snapshot = {...snapshot, patient: updated};
       candidates = null; searchRevision = null; renderHospitals();
       const revision = reviewToken();
-      const result = await api(path() + '/candidates');
+      const result = await api(path() + '/candidates', {}, 'POST');
       if (!await pollNow() || ticket !== epoch || revision !== reviewToken()) throw new Error('탐색 중 보고가 변경됐습니다. 저장된 정보를 다시 확인해 주세요.');
       if (!Array.isArray(result.candidates)) throw new Error('후보 병원 응답을 확인하지 못했습니다.');
       candidates = result.candidates.slice(0, 3).map(hospital => ({...hospital, id: hospital.hospital_id}));
       searchRevision = revision; renderHospitals();
       $('hospital-status').textContent = candidates.length
-        ? '' : '현재 조건의 후보 병원이 없습니다. 환자 정보와 자원·진료 분야 조건을 확인해 주세요.';
+        ? '서버가 상위 후보 병원에 수용 문의를 보냈습니다. 회신과 진행 상황은 이송 채팅에 표시됩니다.'
+        : '현재 조건에서 자동 문의할 수 있는 후보 병원이 없습니다. 환자 정보와 자원·진료 분야 조건을 확인해 주세요.';
       document.dispatchEvent(new CustomEvent('quick119:show-view', {detail: {view: 'gps'}}));
     } finally { operation = false; controls(); }
   }
@@ -672,9 +1042,12 @@
     if (pid || invalidRestored) return;
     const ticket = epoch;
     if (!hospitals.length && !creation) await loadHospitals();
-    if (!creation) creation = {id: 'Q119-TEST-' + newMessageId(), reporter_role: 'transporter', consent: true,
-      age: null, symptoms: null, priority_source: 'unknown', ...intakeOrigin(),
-      extra: {synthetic_fixture: true, creation_token: newMessageId()}};
+    if (!creation) {
+      creation = {id: 'Q119-TEST-' + newMessageId(), reporter_role: 'transporter', consent: true,
+        age: null, symptoms: null, priority_source: 'unknown', ...intakeOrigin(),
+        extra: {synthetic_fixture: true, creation_token: newMessageId()}};
+      storePendingCreation(creation);
+    }
     let data;
     try { data = await api('/api/patients', creation); newWelcome = true; }
     catch (failure) {
@@ -683,11 +1056,18 @@
     }
     if (data.id !== creation.id || data.extra?.creation_token !== creation.extra.creation_token) throw new Error('가상 이송 생성 결과를 확인하지 못했습니다.');
     if (ticket !== epoch) return;
-    pid = data.id; epoch++;
-    const url = new URL(location.href); url.searchParams.set('pid', pid); history.replaceState(null, '', url);
+    const createdId = data.id;
+    creation = null;
+    clearPendingCreation();
+    epoch++;
+    setCurrentPatient(createdId);
     renderHospitals(); await pollNow();
+    void loadTransportPatients().catch(failure => error(`환자 목록을 새로 고치지 못했습니다: ${failure.message}`));
   }
-  $('new-case').addEventListener('click', () => runOperation(createCase));
+  $('new-case').addEventListener('click', () => {
+    if (patientListLoaded) void runOperation(createCase);
+    else void bootstrapTransport();
+  });
   $('reload-hospitals').addEventListener('click', () => { void loadHospitals(); });
   $('depart').addEventListener('click', () => {
     if ($('depart').disabled) return;
@@ -779,7 +1159,6 @@
   $('mark-read').addEventListener('click', () => { $('messages').scrollTop = $('messages').scrollHeight; markRead(); });
   $('messages').addEventListener('scroll', () => { if (atBottom()) markRead(); });
   document.addEventListener('quick119:view', event => {
-    if (event.detail.view === 'gps') stopSpeech();
     if (chatVisible()) requestAnimationFrame(() => { if (atBottom()) markRead(); });
     badge();
   });
@@ -788,7 +1167,6 @@
     if (voiceListening) stopSpeech();
     controls();
   });
-  document.addEventListener('quick119:before-view', event => { if (event.detail.view === 'gps') stopSpeech(); });
   function suspend() {
     suspended = true; catchingUp = true; newWelcome = false; stopSpeech();
     epoch++; clearTimeout(timer); timer = null; abortRequests(); controls();
@@ -796,8 +1174,8 @@
   function resume() {
     if (document.hidden) return;
     suspended = false; catchingUp = true; controls();
-    if (pid) void pollNow();
-    else if (!invalidRestored) void runOperation(createCase);
+    if (!patientListLoaded && !invalidRestored) void bootstrapTransport();
+    else if (pid) void pollNow();
     if (!hospitals.length) void loadHospitals();
   }
   document.addEventListener('visibilitychange', () => document.hidden ? suspend() : resume());
@@ -823,7 +1201,6 @@
       void intake.open(edit && !!intakeEnabled(), fallback); return true;
     }}) || null;
   void loadHospitals();
-  if (pid) void pollNow();
-  else if (!invalidRestored && !suspended) void runOperation(createCase);
+  void bootstrapTransport();
   controls();
 })();

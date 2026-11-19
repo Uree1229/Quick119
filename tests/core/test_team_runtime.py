@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 from urllib.request import urlopen
 
-from server import db, service, synthetic, team_runtime
+from server import db, service, synthetic, team_runtime, team_runtime_profile
 from server import voice_input as voice
 
 
@@ -29,6 +29,22 @@ class TeamRuntimeTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_explicit_source_overrides_are_pinned_without_claiming_baseline_match(self):
+        report = team_runtime.verify_profile(mode='voice-only')
+        self.assertTrue(report['ok'], report['issues'])
+        self.assertEqual(report['source_equivalence'], 'approved_source_override')
+        self.assertFalse(report['exact_baseline_ok'])
+        self.assertIn('APPROVED_WORKFLOW_SOURCE_OVERRIDE',
+                      [warning['code'] for warning in report['warnings']])
+        self.assertEqual(set(team_runtime_profile.APPROVED_SOURCE_OVERRIDES), {
+            'server/db.py', 'server/service.py', 'server/transport_reassignment.py'})
+        with patch.object(team_runtime_profile, 'APPROVED_SOURCE_OVERRIDES',
+                          {'server/transport_reassignment.py': '0' * 64}):
+            rejected = team_runtime.verify_profile(mode='voice-only')
+        self.assertFalse(rejected['ok'])
+        self.assertTrue(any(issue['code'] in ('SOURCE_CHANGED', 'SOURCE_CONTENT_CHANGED')
+                            for issue in rejected['issues']))
+
     def get(self, runtime, path):
         with urlopen(runtime.base_url+path, timeout=5) as response:
             return json.load(response)
@@ -42,6 +58,16 @@ class TeamRuntimeTests(unittest.TestCase):
                 return last
             time.sleep(.05)
         self.fail('Actual worker health did not reach RUNNING: '+repr(last))
+
+    def wait_inquiry_running(self, runtime):
+        until = time.monotonic()+6
+        last = None
+        while time.monotonic() < until:
+            last = self.get(runtime, '/api/system/status')
+            if last['workers']['inquiry']['state'] == 'RUNNING':
+                return last
+            time.sleep(.05)
+        self.fail('Actual inquiry worker health did not reach RUNNING: '+repr(last))
 
     def business(self):
         with closing(sqlite3.connect(self.path.resolve().as_uri()+'?mode=ro', uri=True)) as conn:
@@ -217,14 +243,28 @@ class TeamRuntimeTests(unittest.TestCase):
             self.assertFalse(inquiry.thread.is_alive())
             kakao.assert_not_called()
 
-    def test_voice_only_explicitly_disables_both_workers(self):
+    def test_voice_only_runs_inquiry_worker_without_the_planner(self):
         with team_runtime.CommonRuntime(self.path, mode='voice-only') as runtime:
-            status = self.get(runtime, '/api/system/status')
+            status = self.wait_inquiry_running(runtime)
             self.assertIsNone(runtime.planner)
-            self.assertIsNone(runtime.inquiry_worker)
-            for name in ('planning', 'inquiry'):
-                self.assertEqual(status['workers'][name]['state'], 'DISABLED')
-                self.assertFalse(status['workers'][name]['enabled'])
+            self.assertIsNotNone(runtime.inquiry_worker)
+            self.assertEqual(status['workers']['planning']['state'], 'DISABLED')
+            self.assertFalse(status['workers']['planning']['enabled'])
+            self.assertEqual(status['workers']['inquiry']['state'], 'RUNNING')
+            self.assertTrue(status['workers']['inquiry']['enabled'])
+
+    def test_voice_only_worker_processes_automatic_inquiry_workflow(self):
+        team_runtime.prepare_database(self.path, now=NOW)
+        team_runtime.create_example(self.path, 'VOICE-ONLY-AUTOMATIC')
+        with team_runtime.CommonRuntime(self.path, mode='voice-only') as runtime:
+            self.wait_inquiry_running(runtime)
+            deadline = time.monotonic() + 6
+            while time.monotonic() < deadline:
+                patient = self.get(runtime, '/api/patients/VOICE-ONLY-AUTOMATIC')
+                if len(patient['inquiries']) == 3:
+                    break
+                time.sleep(.05)
+            self.assertEqual(len(patient['inquiries']), 3)
 
     def test_second_runtime_cannot_share_the_same_database(self):
         with team_runtime.CommonRuntime(self.path, mode='voice-only'):
@@ -262,6 +302,12 @@ class TeamRuntimeTests(unittest.TestCase):
     def test_voice_only_restart_preserves_saved_case_and_resource_changes(self):
         team_runtime.prepare_database(self.path)
         team_runtime.create_example(self.path, 'RUNTIME-SAVED-EXAMPLE')
+        conn = db.connect(str(self.path))
+        try:
+            from server import inquiry_workflow
+            inquiry_workflow.start(conn, NOW, 'RUNTIME-SAVED-EXAMPLE', enabled=False)
+        finally:
+            conn.close()
         before = self.business()
         for _ in range(2):
             with team_runtime.CommonRuntime(self.path, mode='voice-only') as runtime:

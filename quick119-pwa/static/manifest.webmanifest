@@ -5,7 +5,7 @@
   "description": "퀵119 응급의료 정보 지원",
   "lang": "ko-KR",
   "dir": "ltr",
-  "start_url": "/?source=pwa",
+  "start_url": "/transport/",
   "scope": "/",
   "display": "standalone",
   "theme_color": "#17375E",

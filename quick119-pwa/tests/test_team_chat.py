@@ -250,8 +250,17 @@ class LiveTeamChat(unittest.TestCase):
         self.assertTrue(info["profile"]["ok"])
         self.assertFalse(info["workers"]["planning"]["enabled"])
         self.assertEqual(info["database"]["hospital_count"], 10)
-        for path in ("/", "/transport/", "/emergency/hospitals", "/manifest.webmanifest", "/sw.js"):
+        for path in ("/", "/transport/", "/patients", "/emergency/hospitals", "/manifest.webmanifest", "/sw.js"):
             self.assertEqual(self.http.get(self.api_url + path).status_code, 200)
+        patients = self.http.get(self.api_url + "/api/transport/patients")
+        self.assertEqual(patients.status_code, 200)
+        self.assertIsInstance(patients.json()["patients"], list)
+        self.assertIn('href="/transport/?new=1"', self.http.get(self.api_url + "/").text)
+        self.assertEqual(self.http.get(self.api_url + "/?source=pwa", follow_redirects=False).headers["location"], "/transport/")
+        self.assertEqual(self.http.get(self.api_url + "/manifest.webmanifest").json()["start_url"], "/transport/")
+        patient_page = self.http.get(self.api_url + "/patients")
+        self.assertIn("transport-patient-cases", patient_page.text)
+        self.assertIn("/static/transport-patients.js?v=2", patient_page.text)
         for path in ('/emergency', '/voice-intake'):
             response = self.http.get(self.api_url + path)
             self.assertEqual(response.status_code, 303)
@@ -274,6 +283,65 @@ class LiveTeamChat(unittest.TestCase):
         self.assertEqual(hospital.headers['cache-control'], 'no-store')
         self.assertIn("connect-src 'self'", hospital.headers['content-security-policy'])
         self.assertEqual(self.http.get(self.api_url + '/hospital/chat-recovery.mjs').status_code, 200)
+
+    def test_patient_list_numbers_details_and_confirmed_delete(self):
+        first = self.create_case()
+        second = self.create_case()
+        self.call("POST", f"/api/patients/{second}/inquiries", {"hospital_ids": ["H01"]})
+        hospital_cases = self.call("GET", "/api/hospitals/H01/inquiries", direct=True)
+        self.assertTrue(any(item["patient_id"] == second for item in hospital_cases["open"]))
+        cases = {item["id"]: item for item in self.call("GET", "/api/transport/patients")["patients"]}
+        first_number = cases[first]["case_number"]
+        second_number = cases[second]["case_number"]
+        self.assertNotEqual(first_number, second_number)
+
+        from chrome_driver import Chrome
+        mobile = Chrome(Path('C:/Program Files/Google/Chrome/Application/chrome.exe'),
+                        self.run_dir / ('patients-profile-' + uuid4().hex))
+        self.addCleanup(mobile.close)
+        mobile.call('Page.enable')
+        mobile.call('Emulation.setDeviceMetricsOverride', width=412, height=915, deviceScaleFactor=1, mobile=True)
+        mobile.call('Page.addScriptToEvaluateOnNewDocument', source="""
+          window.confirmMessages = [];
+          window.confirm = message => { window.confirmMessages.push(message); return true; };
+        """)
+
+        def js(code):
+            result = mobile.call('Runtime.evaluate', expression=code, awaitPromise=True, returnByValue=True)
+            self.assertNotIn('exceptionDetails', result)
+            return result['result'].get('value')
+
+        def wait(condition):
+            end = time.monotonic() + 12
+            while time.monotonic() < end:
+                if js('Boolean(' + condition + ')'):
+                    return
+                time.sleep(.08)
+            self.fail(condition)
+
+        mobile.call('Page.navigate', url=self.api_url + '/patients')
+        wait("document.querySelector('[data-patient-id]')")
+        first_selector = f'[data-patient-id="{first}"]'
+        second_selector = f'[data-patient-id="{second}"]'
+        wait(f"document.querySelector('{first_selector}') && document.querySelector('{second_selector}')")
+        self.assertEqual(js(f"document.querySelector('{first_selector} .transport-patient-case-title').textContent"),
+                         f'환자 {first_number}')
+        self.assertEqual(js(f"document.querySelector('{second_selector} .transport-patient-case-title').textContent"),
+                         f'환자 {second_number}')
+        self.assertFalse(js(f"document.querySelector('{second_selector} details').open"))
+        self.assertTrue(js(f"document.querySelector('{second_selector}').innerText.includes('수용 문의 중')"))
+        js(f"document.querySelector('{second_selector} .transport-patient-delete').click()")
+        wait(f"!document.querySelector('{second_selector}')")
+        self.assertIn(f'환자 {second_number}', js('window.confirmMessages[0]'))
+        self.assertEqual(self.call('GET', f'/api/patients/{second}', status=404)['error'], 'NOT_FOUND')
+        remaining_hospital_cases = self.call("GET", "/api/hospitals/H01/inquiries", direct=True)
+        self.assertFalse(any(item["patient_id"] == second for item in
+                             remaining_hospital_cases["open"] + remaining_hospital_cases["recent"]))
+
+        third = self.create_case()
+        updated = {item["id"]: item for item in self.call("GET", "/api/transport/patients")["patients"]}
+        self.assertEqual(updated[first]["case_number"], first_number)
+        self.assertEqual(updated[third]["case_number"], second_number + 1)
 
     def test_voice_commands_share_the_chat_draft_and_require_touch(self):
         from chrome_driver import Chrome
@@ -318,7 +386,7 @@ class LiveTeamChat(unittest.TestCase):
         receipt = '나이: 10세\n성별: 남성'
 
         # Exercise separate cases so speech cannot reuse the age and sex from typed input.
-        mobile.call('Page.navigate', url=self.api_url + '/transport/')
+        mobile.call('Page.navigate', url=self.api_url + '/transport/?new=1')
         wait(ready)
         self.assertEqual(js(bubble_texts), [welcome])
         typed_pid = js("new URLSearchParams(location.search).get('pid')")
@@ -333,7 +401,7 @@ class LiveTeamChat(unittest.TestCase):
         self.assertEqual(js(bubble_texts), [welcome, report, receipt])
 
         js('window.beforeNextCase = true')
-        mobile.call('Page.navigate', url=self.api_url + '/transport/')
+        mobile.call('Page.navigate', url=self.api_url + '/transport/?new=1')
         wait('!window.beforeNextCase && ' + ready)
         pid = js("new URLSearchParams(location.search).get('pid')")
         self.assertNotEqual(pid, typed_pid)
@@ -360,7 +428,10 @@ class LiveTeamChat(unittest.TestCase):
         js("document.querySelector('#transport-command-confirm').click()")
         wait("!document.querySelector('#transport-gps').hidden && document.querySelectorAll('[data-candidate-id]').length === 3")
         self.assertEqual(self.call('GET', route)['age'], 21)
-        self.assertEqual(self.call('GET', route)['inquiries'], [])
+        inquiries = self.call('GET', route)['inquiries']
+        self.assertEqual(len(inquiries), 3)
+        self.assertTrue(all(q['state'] == 'PENDING' for q in inquiries))
+        self.assertIsNone(js("document.querySelector('[data-transport-inquire]')"))
 
     def test_typing_mode_keeps_the_chat_visible_on_a_short_phone(self):
         from chrome_driver import Chrome
@@ -385,15 +456,15 @@ class LiveTeamChat(unittest.TestCase):
                 time.sleep(.08)
             self.fail(condition)
 
-        brand_bar = "getComputedStyle(document.querySelector('.app-header')).display !== 'none'"
+        home_link = "document.querySelector('.tw-home-link') && getComputedStyle(document.querySelector('.tw-home-link')).display !== 'none'"
         typing = "document.getElementById('transport-workspace').dataset.kb === 'open'"
         ready = "document.querySelector('#transport-workspace[data-connection=live] #transport-message:enabled') && new URLSearchParams(location.search).has('pid')"
         for width, full, reduced, partial, min_log in ((360, 740, 450, 620, 200), (844, 390, 220, 280, 30)):
             with self.subTest(width=width, full=full):
                 screen(width, full)
-                mobile.call('Page.navigate', url=self.api_url + '/transport/')
+                mobile.call('Page.navigate', url=self.api_url + '/transport/?new=1')
                 wait(ready)
-                self.assertTrue(js(brand_bar))
+                self.assertTrue(js(home_link))
                 screen(width, reduced)
                 wait(f"visualViewport.height === {reduced}")
                 self.assertFalse(js(typing))
@@ -402,7 +473,7 @@ class LiveTeamChat(unittest.TestCase):
                 js("document.getElementById('transport-message').focus()")
                 screen(width, reduced)
                 wait(typing)
-                self.assertFalse(js(brand_bar))
+                self.assertTrue(js(home_link))
                 self.assertGreater(js("document.getElementById('transport-messages').getBoundingClientRect().height"), min_log)
                 for height in (reduced, partial):
                     screen(width, height)
@@ -415,7 +486,7 @@ class LiveTeamChat(unittest.TestCase):
                         self.assertLessEqual(bottom, height + 1, selector)
                 screen(width, full)
                 wait("!(" + typing + ")")
-                self.assertTrue(js(brand_bar))
+                self.assertTrue(js(home_link))
 
         # Two acceptance actions and a failed poll compete for space above the active landscape composer.
         pid = js("new URLSearchParams(location.search).get('pid')")
@@ -436,15 +507,24 @@ class LiveTeamChat(unittest.TestCase):
             top, bottom = js(f"((r) => [r.top, r.bottom])(document.querySelector('{selector}').getBoundingClientRect())")
             self.assertGreaterEqual(top, -1, selector)
             self.assertLessEqual(bottom, 221, selector)
-        self.assertTrue(js("""(() => {
+        tray_state = js("""(() => {
             const tray = document.querySelector('.tw-updates');
             tray.scrollTop = tray.scrollHeight;
             const clip = tray.getBoundingClientRect();
-            return [...tray.querySelectorAll('[data-transport-confirm]')].some(button => {
+            const buttons = [...tray.querySelectorAll('[data-transport-confirm]')];
+            const visible = buttons.some(button => {
               const r = button.getBoundingClientRect();
               return r.height > 0 && r.top >= clip.top - 1 && r.bottom <= clip.bottom + 1;
             });
-        })()"""))
+            return JSON.stringify({visible, display: getComputedStyle(tray).display, clip: {
+              top: clip.top, bottom: clip.bottom, height: clip.height, scrollHeight: tray.scrollHeight,
+              clientHeight: tray.clientHeight}, buttons: buttons.map(button => {
+                const r = button.getBoundingClientRect();
+                return {top: r.top, bottom: r.bottom, height: r.height, text: button.textContent};
+              }), stage: document.getElementById('transport-workspace').dataset.stage,
+              connection: document.getElementById('transport-workspace').dataset.connection});
+        })()""")
+        self.assertTrue(json.loads(tray_state)['visible'], tray_state)
 
     def test_real_browser_staff_acceptance_and_chat(self):
         import base64
@@ -478,7 +558,12 @@ class LiveTeamChat(unittest.TestCase):
 
         guard = """
         window.storageWrites=[];
-        Storage.prototype.setItem=function(key){window.storageWrites.push(key);throw Error('Permanent storage disabled in UI test');};
+        const storageSetItem=Storage.prototype.setItem;
+        Storage.prototype.setItem=function(key,value){
+          window.storageWrites.push([key,value]);
+          if(key!=='quick119.activeTransportPatientId')throw Error('Persistent patient data disabled in UI test');
+          return storageSetItem.call(this,key,value);
+        };
         """
         mobile.call('Page.enable'); staff.call('Page.enable')
         mobile.call('Network.enable'); staff.call('Network.enable')
@@ -517,6 +602,11 @@ class LiveTeamChat(unittest.TestCase):
         restored = evaluate(mobile, "document.getElementById('transport-messages').innerText")
         self.assertIn('병원 확정 전 가상 환자 상태 보고', restored)
         self.assertNotIn('시스템과 구급대의 현장 접수를 시작했습니다', restored)
+        mobile.call('Page.navigate', url=self.api_url + '/transport/')
+        wait(mobile, ready)
+        self.assertEqual(evaluate(mobile, "new URLSearchParams(location.search).get('pid')"), pid)
+        self.assertIn('병원 확정 전 가상 환자 상태 보고',
+                      evaluate(mobile, "document.getElementById('transport-messages').innerText"))
         self.call('GET', f'/api/hospitals/H01/patients/{pid}/conversation', status=403)
         self.assertIsNone(evaluate(mobile, "document.querySelector('[data-transport-inquire]')"))
         evaluate(mobile, "document.getElementById('transport-patient-info').click()")
@@ -547,14 +637,13 @@ class LiveTeamChat(unittest.TestCase):
         evaluate(mobile, "document.getElementById('transport-start-search').click()")
         wait(mobile, "document.getElementById('transport-command-panel').open")
         evaluate(mobile, "document.getElementById('transport-command-confirm').click()")
-        wait(mobile, "document.querySelector('[data-transport-inquire=H01]') && !document.getElementById('transport-gps').hidden")
+        wait(mobile, "document.querySelector('[data-candidate-id=H01]') && document.getElementById('transport-inquiries').textContent.includes('수용 문의 중') && !document.getElementById('transport-gps').hidden")
         submitted = self.call('GET', path)
         self.assertEqual(submitted['age'], 20)
         self.assertEqual(submitted['extra']['vitals']['glucose'], 105)
         staff_link = evaluate(mobile, "document.querySelector('[data-candidate-id=H01] a').href")
         self.assertEqual(staff_link, self.api_url + '/hospital/?hid=H01&pid=' + pid)
-        evaluate(mobile, "document.querySelector('[data-transport-inquire=H01]').click()")
-        wait(mobile, "document.getElementById('transport-inquiries').textContent.includes('문의 중')")
+        self.assertIsNone(evaluate(mobile, "document.querySelector('[data-transport-inquire]')"))
         staff.call('Page.navigate', url=staff_link)
         wait(staff, "document.querySelector('[data-act=accept]')")
         evaluate(staff, "document.getElementById('handler').value='가상 의료진';document.getElementById('handler').dispatchEvent(new Event('input'));document.querySelector('[data-act=accept]').click()")
@@ -604,7 +693,7 @@ class LiveTeamChat(unittest.TestCase):
         evaluate(mobile, "document.getElementById('transport-toggle').click();window.scrollTo(0,0)")
         (self.run_dir / 'mobile-map.png').write_bytes(base64.b64decode(mobile.call('Page.captureScreenshot')['data']))
         (self.run_dir / 'hospital-chat.png').write_bytes(base64.b64decode(staff.call('Page.captureScreenshot')['data']))
-        self.assertEqual(evaluate(mobile, 'window.storageWrites'), [])
+        self.assertTrue(evaluate(mobile, "window.storageWrites.length > 0 && window.storageWrites.every(([key,value]) => key === 'quick119.activeTransportPatientId' && value === " + json.dumps(pid) + ")"))
         self.assertEqual(evaluate(staff, 'window.storageWrites'), [])
         for width in (768, 1024):
             staff.call('Emulation.setDeviceMetricsOverride', width=width, height=900, deviceScaleFactor=1, mobile=False)
@@ -639,6 +728,31 @@ class LiveTeamChat(unittest.TestCase):
         self.assertEqual(after_request['adjustment_note'], '가상 병상 점검')
         self.assertEqual(after_request['destination_hospital_id'], 'H01')
 
+        wait(mobile, "Array.from(document.querySelectorAll('#transport-inquiries .transport-inquiry')).some(row => row.dataset.state === 'PENDING')")
+        room = self.call('GET', path + '/conversation')
+        alternative = next(q for q in room['inquiries'] if q['hospital_id'] != 'H01' and q['state'] == 'PENDING')
+        staff.call('Page.navigate', url=self.api_url + '/hospital/?hid=' + alternative['hospital_id'] + '&pid=' + pid)
+        wait(staff, "document.querySelector('[data-act=accept]')")
+        evaluate(staff, "document.getElementById('handler').value='가상 대체 의료진';document.getElementById('handler').dispatchEvent(new Event('input'));document.querySelector('[data-act=accept]').click()")
+        wait(mobile, "document.querySelector('[data-transport-confirm]')?.textContent.includes('새 목적지로 확정')")
+        evaluate(mobile, "document.querySelector('[data-transport-confirm]').click()")
+        alternative_name = json.dumps(alternative['hospital_name'])
+        wait(mobile, "Array.from(document.querySelectorAll('.tw-system-group-headline')).some(headline => "
+                     "headline.textContent.includes(" + json.dumps(alternative['hospital_name'] +
+                     '으로 목적지가 변경됐습니다.') + "))")
+        self.assertEqual(evaluate(mobile, "document.getElementById('transport-error').textContent"), '')
+        reassigned = self.call('GET', path)
+        self.assertEqual(reassigned['destination_hospital_id'], alternative['hospital_id'])
+        self.assertEqual(reassigned['state'], 'IN_TRANSIT')
+        self.assertFalse(reassigned['needs_adjustment'])
+        self.call('POST', path + '/change-destination', {'inquiry_id': alternative['id']}, status=409)
+        self.call('GET', f"/api/hospitals/H01/patients/{pid}/conversation", status=403)
+
+        staff.call('Page.navigate', url=self.api_url + '/hospital/?hid=' + alternative['hospital_id'] + '&pid=' + pid)
+        wait(staff, "document.querySelector('[data-tab=incoming]')")
+        evaluate(staff, "document.querySelector('[data-tab=incoming]').click()")
+        wait(staff, "document.querySelector('[data-patient=" + pid + "]')")
+        evaluate(staff, "document.querySelector('[data-patient=" + pid + "]').click()")
         wait(staff, f"document.querySelector('{actions}arrive]:enabled')?.checkVisibility()")
         evaluate(staff, f"document.querySelector('{actions}arrive]').click()")
         wait(staff, f"document.querySelector('{actions}discharge]:enabled')?.checkVisibility()")

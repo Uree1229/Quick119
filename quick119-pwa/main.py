@@ -170,7 +170,7 @@ import re
 @app.middleware("http")
 async def medical_ui_theme(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith(("/static/", "/hospital/")) or request.url.path in {"/", "/emergency", "/pwa-check", "/voice-intake", "/transport/"}:
+    if request.url.path.startswith(("/static/", "/hospital/")) or request.url.path in {"/", "/emergency", "/pwa-check", "/voice-intake", "/transport/", "/patients"}:
         return response
     if "text/html" not in response.headers.get("content-type", "").lower():
         return response
@@ -269,6 +269,8 @@ app.mount(
 @app.get("/", response_class=HTMLResponse)
 
 def home(request: Request):
+    if request.query_params.get("source") == "pwa":
+        return RedirectResponse("/transport/", status_code=303)
     return templates.TemplateResponse(request=request, name="index.html", context={"active_nav": "home", "app_env": APP_ENV})
 
 
@@ -422,7 +424,13 @@ def register_patient(
 
 
 @app.get("/patients", response_class=HTMLResponse)
-def patients_page():
+def patients_page(request: Request):
+    if chat_ui_enabled(request):
+        return templates.TemplateResponse(
+            request=request,
+            name="transport_patients.html",
+            context={"active_nav": "patients"},
+        )
     patients = get_patients()
     rows = []
     for patient in patients:
