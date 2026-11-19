@@ -30,18 +30,35 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
     setAttribute(name, value) { this[name] = value; }
     append(...children) { for (const child of children) { if (child.parent) child.parent.children = child.parent.children.filter(node => node !== child); this.children.push(child); child.parent = this; } }
     replaceChildren(...children) { this.children = []; this.append(...children); }
+    querySelector(selector) {
+      if (!selector.startsWith('.')) return null;
+      const className = selector.slice(1);
+      const find = node => {
+        for (const child of node.children) {
+          if (child.className?.split(/\s+/).includes(className)) return child;
+          const nested = find(child);
+          if (nested) return nested;
+        }
+        return null;
+      };
+      return find(this);
+    }
     focus() {}
   }
   const ids = ['workspace', 'chat', 'gps', 'sheet', 'sheet-handle', 'message', 'message-label', 'message-form', 'messages',
     'participants', 'depart', 'voice-start', 'voice-stop', 'voice-status', 'voice-interim', 'new-case', 'send',
     'discard', 'review-draft', 'pending', 'connection', 'chat-status',
-    'hospitals', 'voice-panel', 'hospital-contact', 'hospital-status', 'reload-hospitals', 'inquiries', 'current-destination', 'error', 'unread', 'toggle', 'toggle-label',
+    'hospitals', 'voice-panel', 'hospital-contact', 'hospital-status', 'reload-hospitals', 'assignment-strip',
+    'assignment-meta', 'inquiries', 'current-destination', 'error', 'unread', 'toggle', 'toggle-label',
     'title', 'mark-read', 'review-panel', 'patient-info', 'start-search', 'review-close', 'review-close-top', 'review-form', 'search-status',
-    'tts-toggle', 'tts-status', 'intake-feedback', 'answer', 'command-panel', 'command-close', 'command-confirm',
-    'command-title', 'command-fields', 'command-reports', 'command-warnings'];
+    'tts-toggle', 'tts-status', 'progress-log-toggle', 'progress-log-count', 'progress-log', 'progress-log-list',
+    'progress-log-close-top', 'progress-log-close', 'intake-feedback', 'answer', 'command-panel', 'command-close',
+    'command-confirm', 'command-title', 'command-fields', 'command-reports', 'command-warnings'];
   for (const id of ids) { const node = new Element(); node.id = 'transport-' + id; }
   const $ = id => nodes.get('transport-' + id);
   Object.assign($('command-panel'), {open: false, showModal() { this.open = true; }, close() { this.open = false; }});
+  Object.assign($('progress-log'), {open: false, showModal() { this.open = true; },
+    close() { this.open = false; this.dispatchEvent({type: 'close'}); }});
   $('gps').hidden = true;
   $('workspace').dataset.ttsCloud = cloudSpeech ? 'enabled' : 'disabled';
   const document = new Events(); document.hidden = false;
@@ -256,15 +273,17 @@ test('accepted reassignment uses the top inquiry tray and hospital card, then ch
   assert.equal(noticeGroup.children[1].textContent, '수용 가능한 대체병원 확보 · 새 목적지를 확정하세요',
     'accepted replacement state takes precedence over an earlier departure notice');
   assert.match(noticeGroup.children[2].textContent, /조정 사유: 현재 병상 부족/);
-  assert.equal(noticeGroup.children[3].children[0].textContent, '자세히 4건');
+  assert.equal(noticeGroup.children[3].children[0].textContent, '자세히 2건');
   assert.ok(!JSON.stringify(noticeGroup.children.map(node => node.dataset)).includes('transportConfirm'),
     'the progress card has no isolated confirmation action');
   const card = h.document.getElementById('transport-cand-H02');
   assert.ok(card, 'the accepted alternative appears as a hospital card');
   const descendants = node => [node, ...(node.children || []).flatMap(descendants)];
   const trayRows = h.$('inquiries').children;
-  assert.deepEqual(trayRows.map(row => row.children[1].children[0].textContent), ['대체 병원', '문의 중 병원']);
-  const confirmButton = descendants(trayRows[0]).find(node => node.dataset.transportConfirm === '42');
+  assert.deepEqual(trayRows.map(row => row.children[1].children[0].textContent),
+    ['현재 목적지', '대체 병원', '문의 중 병원']);
+  const confirmationRow = trayRows.find(row => descendants(row).some(node => node.dataset.transportConfirm === '42'));
+  const confirmButton = descendants(confirmationRow).find(node => node.dataset.transportConfirm === '42');
   assert.ok(confirmButton, 'accepted alternative is confirmed from the top inquiry tray');
   assert.ok(descendants(card).some(node => node.dataset.transportConfirm === '42'),
     'the hospital card offers the same action');
@@ -275,6 +294,8 @@ test('accepted reassignment uses the top inquiry tray and hospital card, then ch
   noticeGroup.details.open = true;
 
   await confirmButton.emit('click');
+  await h.poll();
+  assert.ok(h.$('progress-log-list').children.some(row => row.dataset.eventType === 'destination_changed'));
   const request = h.calls.find(call => call.url.endsWith('/change-destination'));
   assert.equal(request.method, 'POST');
   assert.equal(request.body.inquiry_id, 42);
@@ -399,7 +420,7 @@ test('TTS plays PC-rendered Korean audio in order and falls back to the device v
 });
 
 for (const pcVoice of [true, false]) {
-  test(`inquiry bookkeeping is grouped and response summaries are spoken once with ${pcVoice ? 'PC audio' : 'device fallback'}`, async () => {
+  test(`inquiry bookkeeping stays in the progress log and response summaries are spoken once with ${pcVoice ? 'PC audio' : 'device fallback'}`, async () => {
     const notice = (n, type, text) => ({id: 'event:' + n, kind: 'system', type, sender_role: 'system',
       text, at: n, order_key: [n, 0, n]});
     const oldSent = notice(2, 'inquiry_sent', '이전 수용 문의를 등록했습니다.');
@@ -425,9 +446,11 @@ for (const pcVoice of [true, false]) {
     const spokenAcceptance = '병원 회신: 대체 병원 수용 가능 · 새 병원 수용 불가';
     assert.deepEqual(spoken(), [spokenAcceptance], 'routine registrations are silent and responses in one poll are combined');
     const noticeGroups = h.$('messages').children.filter(node => node.dataset.kind === 'notice-group');
-    assert.equal(noticeGroups.length, 1, 'consecutive inquiry events occupy one progress card');
-    assert.match(noticeGroups[0].children[1].textContent, /병원 문의: 대체 병원 수용 가능 응답 · 새 병원 수용 불가/);
-    assert.equal(noticeGroups[0].children.at(-1).children[0].textContent, '자세히 6건');
+    assert.equal(noticeGroups.length, 0, 'inquiry progress is not duplicated in chat');
+    assert.deepEqual(h.$('progress-log-list').children.map(row => row.dataset.eventType),
+      ['patient_created', 'inquiry_sent', 'inquiry_created', 'inquiry_sent', 'inquiry_created',
+        'inquiry_responded', 'inquiry_responded'],
+      'the chronological progress log retains each source event');
     const finish = async index => {
       if (pcVoice) h.audios[0].onended();
       else h.utterances[index].onend();
@@ -578,12 +601,11 @@ test('reloading a pid restores one short welcome before notices from the next hi
   ]});
   await settle();
   assert.ok(h.calls.some(call => call.url.includes('event_cursor=1&')));
-  assert.deepEqual(h.$('messages').children.map(node => node.id), ['transport-item-intake-welcome', 'transport-notices-event:2']);
-  const [greeting, message] = h.$('messages').children;
+  assert.deepEqual(h.$('messages').children.map(node => node.id), ['transport-item-intake-welcome']);
+  const [greeting] = h.$('messages').children;
   assert.equal(greeting.children[1].textContent, '환자 상태를 알려주세요.');
-  assert.equal(message.dataset.kind, 'notice-group');
-  assert.equal(message.children[1].textContent, notice.text);
-  assert.equal(message.children[2].children[0].textContent, '자세히 1건');
+  assert.deepEqual(h.$('progress-log-list').children.map(row => row.dataset.eventType),
+    ['patient_created', notice.type]);
   assert.equal(h.calls.filter(call => call.url === '/api/patients').length, 0);
   assert.equal(h.$('new-case').hidden, true); assert.equal(h.$('message').disabled, false);
 });
