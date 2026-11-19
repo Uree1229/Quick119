@@ -154,7 +154,11 @@
   check(inquiries.length === hospitals.length && inquiries.every(q => q.state === 'PENDING')
     && !$('send').disabled && $('participants').children.length === 2, 'Automatic inquiries keep system/crew chat writable without adding hospitals');
   accepted = true; inquiries[0].state = 'ACCEPTED'; inquiries[0].usable = true; await tick();
-  check(!$('send').disabled && $('participants').children.length === 2 && !!document.querySelector('[data-transport-confirm]'), 'Staff acceptance alone does not add hospital');
+  const beforeConfirmation = {sendDisabled: $('send').disabled,
+    participants: [...$('participants').children].map(person => ({role: person.dataset.role, name: person.textContent})),
+    session, confirmButton: !!document.querySelector('[data-transport-confirm]')};
+  check(!beforeConfirmation.sendDisabled && beforeConfirmation.participants.length === 2 && beforeConfirmation.confirmButton,
+    'Staff acceptance alone does not add hospital: ' + JSON.stringify(beforeConfirmation));
   $('message').value = '시스템에 작성 중인 미전송 초안'; $('message').dispatchEvent(new Event('input'));
   handle.click();
   document.querySelector('[data-transport-confirm]').click(); await settle();

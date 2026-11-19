@@ -65,7 +65,8 @@
   const cloudSpeech = root.dataset.ttsCloud === 'enabled';
   // Routine workflow bookkeeping stays silent. Patient changes, clinical questions, replies and transitions are spoken.
   const spokenNotices = new Set(['patient_updated', 'patient_information_amended',
-    'inquiry_responded', 'inquiry_question',
+    'inquiry_responded', 'inquiry_expired', 'inquiry_cancelled', 'inquiry_closed',
+    'inquiry_question',
     'destination_confirmed', 'destination_changed', 'departed', 'adjustment_needed', 'hospital_keeps',
     'transport_inquiry_started', 'transport_inquiry_candidates_preserved',
     'transport_inquiry_ready', 'transport_inquiry_exhausted', 'transport_recheck_required',
@@ -250,6 +251,22 @@
       speak(greeting.text);
     }
   });
+  $('progress-log-toggle').addEventListener('click', () => {
+    const dialog = $('progress-log');
+    if (typeof dialog.showModal !== 'function') {
+      error('이 브라우저에서는 진행 기록을 열 수 없습니다.');
+      return;
+    }
+    renderProgressLog();
+    dialog.showModal();
+    $('progress-log-toggle').setAttribute('aria-expanded', 'true');
+    $('progress-log-close-top').focus();
+  });
+  $('progress-log-close-top').addEventListener('click', () => $('progress-log').close());
+  $('progress-log-close').addEventListener('click', () => $('progress-log').close());
+  $('progress-log').addEventListener('close', () => {
+    $('progress-log-toggle').setAttribute('aria-expanded', 'false');
+  });
   if (window.speechSynthesis?.addEventListener) {
     window.speechSynthesis.addEventListener('voiceschanged', updateSpeechVoices);
   } else if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = updateSpeechVoices;
@@ -273,8 +290,10 @@
   const inquiryNoticeTypes = new Set(['inquiry_sent', 'inquiry_created', 'inquiry_retried',
     'inquiry_responded', 'inquiry_expired', 'inquiry_cancelled', 'inquiry_closed',
     'inquiry_status_changed', 'inquiry_workflow_batch', 'inquiry_workflow_ready',
-    'inquiry_workflow_waiting', 'inquiry_workflow_exhausted', 'transport_inquiry_batch',
-    'transport_inquiry_decision', 'transport_inquiry_waiting']);
+    'inquiry_workflow_waiting', 'inquiry_workflow_exhausted', 'transport_inquiry_started',
+    'transport_inquiry_candidates_preserved', 'transport_inquiry_ready', 'transport_inquiry_exhausted',
+    'transport_alternative_requested', 'transport_inquiry_batch', 'transport_inquiry_decision',
+    'transport_inquiry_waiting']);
   const adjustmentStartTypes = new Set(['adjustment_needed', 'transport_alternative_requested']);
   const adjustmentEndTypes = new Set(['destination_changed', 'hospital_keeps', 'patient_cancelled']);
   const outcomeTypes = new Set(['destination_changed', 'destination_confirmed', 'departed',
@@ -416,9 +435,12 @@
     return !!currentHospital && inquiry?.state === 'ACCEPTED' && inquiry.usable
       && inquiry.hospital_id !== currentHospital;
   }
+  function isInquiryProgress(item) {
+    return item.kind === 'system' && item.sender_role === 'system' && inquiryNoticeTypes.has(item.type);
+  }
   function isSystemNotice(item) {
     return item.kind === 'system' && item.sender_role === 'system' && !!item.type
-      && !protectedNoticeTypes.has(item.type);
+      && !protectedNoticeTypes.has(item.type) && !inquiryNoticeTypes.has(item.type);
   }
   function eventOrder(item) {
     const value = Number(item.order_key?.[0]);
@@ -454,10 +476,11 @@
   function noticeHeadline(group) {
     const activeAdjustmentStart = latestOpenAdjustmentStart();
     if (activeAdjustmentStart) {
+      const hasCandidate = (snapshot?.inquiries || []).some(isAlternativeAcceptance);
+      if (hasCandidate) return '수용 가능한 대체병원 확보 · 새 목적지를 확정하세요';
       const activeEvents = group.filter(item => eventOrder(item) >= activeAdjustmentStart);
       if (activeEvents.length) {
-        const hasCandidate = (snapshot?.inquiries || []).some(isAlternativeAcceptance);
-        if (hasCandidate || activeEvents.some(item => item.type === 'transport_inquiry_ready')) {
+        if (activeEvents.some(item => item.type === 'transport_inquiry_ready')) {
           return '수용 가능한 대체병원 확보 · 새 목적지를 확정하세요';
         }
         if (activeEvents.some(item => item.type === 'transport_inquiry_exhausted')) {
@@ -467,6 +490,7 @@
         if (activeEvents.some(item => inquiryNoticeTypes.has(item.type))) return inquirySummary(activeEvents);
         return activeEvents[activeEvents.length - 1].text;
       }
+      return group[group.length - 1].text;
     }
     const outcomes = group.filter(item => outcomeTypes.has(item.type));
     if (outcomes.length) return outcomes[outcomes.length - 1].text;
@@ -487,7 +511,10 @@
   }
   function renderNoticeGroup(group) {
     const nodeId = 'transport-notices-' + group[0].id;
-    const signature = JSON.stringify(group.map(item => [item.id, item.text, item.type]));
+    const headlineText = noticeHeadline(group);
+    const reasonNotice = [...group].reverse().find(item => item.type === 'adjustment_needed');
+    const reason = typeof reasonNotice?.data?.note === 'string' ? reasonNotice.data.note.trim() : '';
+    const signature = JSON.stringify([group.map(item => [item.id, item.text, item.type]), headlineText, reason]);
     let node = document.getElementById(nodeId);
     if (!node) {
       node = el('article', 'tw-system-group');
@@ -496,12 +523,10 @@
     } else if (node.dataset.signature === signature) return node;
     const wasOpen = !!node.details?.open;
     node.dataset.signature = signature;
-    const headline = el('p', 'tw-system-group-headline', noticeHeadline(group));
+    const headline = el('p', 'tw-system-group-headline', headlineText);
     const heading = el('strong', 'tw-system-group-label', '진행 상황');
     const headingRow = el('div', 'tw-system-group-title');
     headingRow.append(heading);
-    const reasonNotice = [...group].reverse().find(item => item.type === 'adjustment_needed');
-    const reason = typeof reasonNotice?.data?.note === 'string' ? reasonNotice.data.note.trim() : '';
     const children = [headingRow, headline];
     if (reason) children.push(el('p', 'tw-system-group-reason', `조정 사유: ${reason}`));
     const details = el('details', 'tw-system-group-details');
@@ -520,10 +545,44 @@
     node.details = details;
     return node;
   }
+  function progressLogEvents() {
+    return [...items.values()].filter(item => item.kind === 'system' && item.sender_role === 'system' && !!item.type)
+      .sort((a, b) => eventOrder(a) - eventOrder(b) || String(a.id).localeCompare(String(b.id)));
+  }
+  function updateAssignmentStripVisibility() {
+    const hasDestination = !$('current-destination').hidden;
+    const hasInquiries = !!$('inquiries').querySelector('.transport-inquiry');
+    $('assignment-strip').hidden = !(hasDestination || hasInquiries);
+  }
+  function renderProgressLog() {
+    const events = progressLogEvents();
+    const button = $('progress-log-toggle');
+    const count = $('progress-log-count');
+    const list = $('progress-log-list');
+    const scrollTop = list.scrollTop;
+    button.hidden = events.length === 0;
+    count.hidden = events.length === 0;
+    count.textContent = events.length > 99 ? '99+' : String(events.length);
+    const rows = events.map(item => {
+      const row = el('li', '', '');
+      row.dataset.eventType = item.type;
+      const text = item.text || item.type;
+      row.append(el('p', '', item.hospital_name ? `${item.hospital_name} · ${text}` : text));
+      if (item.at) row.append(el('time', '', clock(item.at)));
+      return row;
+    });
+    if (!rows.length) rows.push(el('li', 'tw-progress-log-empty', '아직 진행 기록이 없습니다.'));
+    list.replaceChildren(...rows);
+    list.scrollTop = scrollTop;
+    updateAssignmentStripVisibility();
+  }
   function changeDestinationButton(inquiry, hospital, label = '새 목적지로 확정') {
-    const button = el('button', 'tw-btn tw-btn-confirm', label); button.type = 'button';
+    const button = el('button', 'tw-confirm-control tw-btn-confirm', label); button.type = 'button';
     button.dataset.transportConfirm = String(inquiry.id); button.dataset.hospitalId = inquiry.hospital_id;
-    button.setAttribute('aria-label', `${inquiry.hospital_name || hospital?.name || inquiry.hospital_id}(으)로 ${label}`);
+    const name = inquiry.hospital_name || hospital?.name || inquiry.hospital_id;
+    const accessibleLabel = label === '새 목적지로 확정' ? label : `${name}으로 목적지 확정`;
+    button.setAttribute('aria-label', accessibleLabel);
+    button.title = accessibleLabel;
     button.addEventListener('click', () => runOperation(async () => {
       const currentHospital = snapshot?.active_hospital_session?.hospital_id;
       const action = currentHospital && currentHospital !== inquiry.hospital_id ? '/change-destination' : '/confirm';
@@ -531,6 +590,12 @@
       if (hospital) selectRoute(hospital);
     }));
     return button;
+  }
+  function confirmedDestinationControl(name) {
+    const control = el('span', 'tw-confirm-control tw-confirm-control--checked');
+    control.setAttribute('role', 'img');
+    control.setAttribute('aria-label', `${name}으로 목적지 확정됨`);
+    return control;
   }
   function renderMessages() {
     const follow = atBottom();
@@ -541,9 +606,16 @@
     });
     const entries = [];
     for (let index = 0; index < ordered.length;) {
+      if (hiddenSystemEvents.has(ordered[index].type) || isInquiryProgress(ordered[index])) { index++; continue; }
       if (isSystemNotice(ordered[index])) {
         const group = [];
-        while (index < ordered.length && isSystemNotice(ordered[index])) group.push(ordered[index++]);
+        while (index < ordered.length) {
+          if (hiddenSystemEvents.has(ordered[index].type) || isInquiryProgress(ordered[index])) {
+            index++; continue;
+          }
+          if (!isSystemNotice(ordered[index])) break;
+          group.push(ordered[index++]);
+        }
         entries.push({key: 'notice:' + group[0].id, group});
       } else {
         entries.push({key: 'item:' + ordered[index].id, item: ordered[index++]});
@@ -580,7 +652,6 @@
         else if (item.type === 'inquiry_responded') inquiryResponses.push(item);
         else if (spokenNotices.has(item.type)) readSystem(item.id, item.text, live);
       }
-      if (item.kind === 'system' && hiddenSystemEvents.has(item.type)) continue;
       if (item.kind === 'system' && item.type === 'crew_intake_reply') {
         // Commands are private UI turns, separate from the clinical reports shared with a hospital.
         if (item.data?.command_text) {
@@ -602,7 +673,7 @@
       }).join(' · ');
       readSystem('inquiry-responses:' + inquiryResponses.map(item => item.id).join(','), `병원 회신: ${text}`, live);
     }
-    renderMessages(); badge();
+    renderMessages(); renderProgressLog(); badge();
   }
   // Typing needs an open conversation; sending also needs the latest refresh. A missed 3-second refresh therefore
   // blocks sending only: the draft stays editable and the soft keyboard is not dropped mid-sentence.
@@ -839,7 +910,7 @@
           // No hospital_id on purpose: car-routes.js ignores repeat selection of the same hospital.
           go.addEventListener('click', () => selectRoute(hospital, true));
           const icon = el('span', 'tw-inquiry-icon'); icon.setAttribute('aria-hidden', 'true');
-          box.append(icon, copy, go);
+          box.append(icon, copy, confirmedDestinationControl(hospital.name), go);
         }
       }
     }
@@ -863,10 +934,15 @@
       const q = latest.get(id);
       card.dataset.inquiry = q?.state || '';
       state.hidden = !q; state.dataset.state = q?.state || ''; state.textContent = q ? inquiryLabels[q.state] || q.state : '';
-      const actionSignature = isAlternativeAcceptance(q) ? String(q.id) : '';
+      const currentDestination = q?.state === 'CONFIRMED'
+        && q.hospital_id === snapshot?.active_hospital_session?.hospital_id;
+      const actionSignature = isAlternativeAcceptance(q) ? `confirm:${q.id}`
+        : currentDestination ? `checked:${q.id}` : '';
       if (actionSignature !== entry.actionSignature) {
-        actions.replaceChildren(route, ...(actionSignature ? [changeDestinationButton(q, hospital,
-          '이 병원으로 목적지 변경 확정')] : []));
+        const control = isAlternativeAcceptance(q)
+          ? changeDestinationButton(q, hospital, '새 목적지로 확정')
+          : currentDestination ? confirmedDestinationControl(hospital.name) : null;
+        actions.replaceChildren(route, ...(control ? [control] : []));
         entry.actionSignature = actionSignature;
       }
     }
@@ -883,7 +959,12 @@
   function renderInquiries() {
     const allInquiries = snapshot?.inquiries || [];
     const currentHospital = snapshot?.active_hospital_session?.hospital_id;
-    const alternatives = allInquiries.filter(q => q.hospital_id !== currentHospital
+    const latestByHospital = new Map([...allInquiries]
+      .sort((a, b) => Number(a.id) - Number(b.id))
+      .filter(q => q.hospital_id)
+      .map(q => [q.hospital_id, q]));
+    const latestInquiries = [...latestByHospital.values()];
+    const alternatives = latestInquiries.filter(q => q.hospital_id !== currentHospital
       && (['PENDING', 'CHECKING'].includes(q.state) || (q.state === 'ACCEPTED' && q.usable)));
     const reassignmentActive = !!currentHospital && adjustmentIsOpen() && alternatives.length > 0;
     if (root) root.dataset.reassignmentActive = String(reassignmentActive);
@@ -891,14 +972,21 @@
     if (currentDestination) currentDestination.hidden = !reassignmentActive;
     $('inquiries').setAttribute('aria-label', reassignmentActive
       ? '현재 목적지와 대체 병원 문의 및 확정' : '수용 문의 및 목적지 확정');
-    const inquiries = [...(reassignmentActive ? alternatives : currentHospital ? [] : allInquiries)].sort((a, b) =>
-      (inquiryPriority[a.state] ?? 2) - (inquiryPriority[b.state] ?? 2));
+    const currentVersion = snapshot?.patient?.version;
+    const currentRound = latestInquiries.filter(q => currentVersion === undefined
+      || q.patient_version === undefined || q.patient_version === null || q.patient_version === currentVersion);
+    const inquiries = [...(reassignmentActive ? alternatives : currentHospital ? [] : currentRound)].sort((a, b) =>
+      (inquiryPriority[a.state] ?? 2) - (inquiryPriority[b.state] ?? 2) || Number(a.id) - Number(b.id));
     const signature = JSON.stringify([reassignmentActive, snapshot?.patient?.state, currentHospital,
       inquiries.map(q => [q.id, q.state, q.usable, q.hospital_name || q.hospital_id])]);
-    if ($('inquiries').dataset.signature === signature) { renderDestination(); return; }
+    if ($('inquiries').dataset.signature === signature) {
+      renderDestination(); updateAssignmentStripVisibility(); return;
+    }
     const focusedId = document.activeElement?.dataset.transportConfirm;
     let restoreFocus;
     $('inquiries').dataset.signature = signature; $('inquiries').replaceChildren();
+    if (reassignmentActive) $('inquiries').append(currentDestination);
+    else $('assignment-meta').append(currentDestination);
     for (const q of inquiries) {
       const name = q.hospital_name || q.hospital_id;
       const row = el('div', 'transport-inquiry'); row.dataset.state = q.state;
@@ -917,7 +1005,7 @@
       $('inquiries').append(row);
     }
     restoreFocus?.focus({preventScroll: true});
-    renderHospitals(); renderDestination();
+    renderHospitals(); renderDestination(); updateAssignmentStripVisibility();
   }
   function schedule() {
     clearTimeout(timer); timer = null;

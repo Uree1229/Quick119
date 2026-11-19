@@ -26,6 +26,7 @@
   --i-hospital:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 20.5V6a1.5 1.5 0 0 1 1.5-1.5h11A1.5 1.5 0 0 1 19 6v14.5M3 20.5h18M10 20.5v-4h4v4M12 7.5v5M9.5 10h5'/%3E%3C/svg%3E");
   --i-check:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12.5 4.5 4.5L19 7.5'/%3E%3C/svg%3E");
   --i-close:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6 6 18'/%3E%3C/svg%3E");
+  --i-history:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.5 8.5V3.8m0 4.7h4.7M4.8 8.2A8.3 8.3 0 1 1 4 15'/%3E%3Cpath d='M12 7v5l3.2 2'/%3E%3C/svg%3E");
   --i-locate:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='6.5'/%3E%3Ccircle cx='12' cy='12' r='1.6' fill='%23000'/%3E%3Cpath d='M12 2v3M12 19v3M2 12h3M19 12h3'/%3E%3C/svg%3E");
   --i-refresh:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 12a8 8 0 1 1-2.6-5.9'/%3E%3Cpath d='M20 4v5h-5'/%3E%3C/svg%3E");
   --i-pin:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 21s-6.5-6.2-6.5-11.2a6.5 6.5 0 0 1 13 0C18.5 14.8 12 21 12 21z'/%3E%3Ccircle cx='12' cy='9.8' r='2.4'/%3E%3C/svg%3E");
@@ -55,6 +56,7 @@
 .tw-i--patient{--i:var(--i-patient)}.tw-i--close{--i:var(--i-close)}.tw-i--route{--i:var(--i-route)}.tw-i--pin{--i:var(--i-pin)}
 .tw-i--hospital{--i:var(--i-hospital)}.tw-i--alert{--i:var(--i-alert)}
 .tw-i--patient-list{--i:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 6h11M10 12h11M10 18h11'/%3E%3Ccircle cx='4' cy='6' r='1' fill='%23000'/%3E%3Ccircle cx='4' cy='12' r='1' fill='%23000'/%3E%3Ccircle cx='4' cy='18' r='1' fill='%23000'/%3E%3C/svg%3E")}
+.tw-i--history{--i:var(--i-history)}
 
 /* ---------- Buttons ---------- */
 #transport-workspace .tw-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:0 14px;border-radius:12px;border:1px solid transparent;font-size:14px;font-weight:800;line-height:1.25;letter-spacing:-.3px;text-align:center;text-decoration:none;white-space:normal;transition:background .15s,box-shadow .15s,opacity .15s}
@@ -72,6 +74,9 @@
 #transport-workspace .tw-round-sm{width:44px;height:44px}
 #transport-workspace .tw-round-sm .tw-i{width:20px;height:20px}
 #transport-workspace .tw-patient-list{text-decoration:none}
+#transport-workspace .tw-progress-log{position:relative}
+#transport-workspace .tw-log-count{position:absolute;top:-4px;right:-4px;display:grid;place-items:center;min-width:19px;height:19px;padding:0 4px;border:2px solid #fff;border-radius:10px;background:var(--tw-red);color:#fff;font-size:10px;font-weight:900;line-height:15px}
+#transport-workspace .tw-log-count[hidden]{display:none}
 #transport-workspace .tw-tts .tw-i{--i:var(--i-speaker-off)}
 #transport-workspace .tw-tts[aria-pressed=true]{border-color:var(--tw-navy);background:var(--tw-navy);color:#fff}
 #transport-workspace .tw-tts[aria-pressed=true] .tw-i{--i:var(--i-speaker)}
@@ -122,10 +127,13 @@
 /* After confirmation, only an active adjustment reopens the shared inquiry tray. */
 #transport-workspace[data-stage=joined] .tw-steps{display:none}
 #transport-workspace[data-stage=joined]:not([data-reassignment-active=true]) .tw-inquiries{display:none}
-#transport-workspace .tw-assignment-strip{display:contents}
+#transport-workspace .tw-assignment-strip{display:flex;align-items:stretch;gap:6px;min-width:0;padding:6px 12px;background:#fff;border-bottom:1px solid var(--tw-line)}
+#transport-workspace .tw-assignment-strip[hidden]{display:none}
+.tw-assignment-meta{display:flex;align-items:center;gap:6px;flex:0 1 auto;min-width:0}
 #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-assignment-strip{
   display:flex;align-items:stretch;gap:6px;padding:6px 12px;background:#fff;border-bottom:1px solid var(--tw-line)
 }
+#transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-assignment-meta{flex:0 0 auto}
 #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiries{
   flex:1 1 0;min-width:0;min-height:44px;padding:0;border:0;overflow-x:auto
 }
@@ -157,23 +165,32 @@
 /* Inquiry tray: one horizontal strip (57px) instead of a 59px row per hospital. The chip that needs a decision
    (ACCEPTED with 목적지 확정) or names the destination comes first in DOM and keyboard order; the next chip peeks at the edge.
    It is the first thing to give way when the screen is short (the chat column below never gets smaller than its dock). */
-.tw-inquiries{position:relative;z-index:4;flex:0 1 auto;min-height:min(55px,40%);display:flex;align-items:stretch;gap:6px;padding:6px 12px;background:#fff;border-bottom:1px solid var(--tw-line);overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scroll-snap-type:x proximity;scroll-padding-inline:12px;scrollbar-width:none}
+.tw-inquiries{position:relative;z-index:4;flex:1 1 0;min-width:0;min-height:min(55px,40%);display:flex;align-items:stretch;gap:6px;padding:6px 12px;background:#fff;border-bottom:1px solid var(--tw-line);overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scroll-snap-type:x proximity;scroll-padding-inline:12px;scrollbar-width:none}
 .tw-inquiries::-webkit-scrollbar{display:none}
 .tw-inquiries:empty{display:none}
 .transport-inquiry{flex:0 0 auto;max-width:calc(100% - 40px);display:flex;align-items:center;gap:8px;min-height:44px;padding:0 10px 0 8px;border:1px solid var(--tw-line);border-radius:12px;background:var(--tw-soft);scroll-snap-align:start}
 .transport-inquiry:has(.tw-btn-confirm){padding-right:1px}
 .transport-inquiry[data-state=ACCEPTED]{border-color:#9fd3b8;background:var(--tw-green-soft)}
 .transport-inquiry[data-state=CONFIRMED]{border-color:#bcd0e8;background:var(--tw-navy-soft)}
-/* Two or more hospitals accepted: their rows take the full width so no 목적지 확정 hides behind the scroll. */
-.tw-inquiries:has([data-state=ACCEPTED] ~ [data-state=ACCEPTED]){flex-wrap:wrap;max-height:40%;overflow-x:hidden;overflow-y:auto}
-.tw-inquiries:has([data-state=ACCEPTED] ~ [data-state=ACCEPTED]) .transport-inquiry[data-state=ACCEPTED]{flex:1 0 100%;max-width:none}
 .tw-inquiry-icon{position:relative;flex:none;width:24px;height:24px;border-radius:8px;background:#fff;color:var(--tw-navy);box-shadow:0 1px 3px #17375e14}
 .tw-inquiry-icon::before{content:"";position:absolute;inset:4px;background:currentColor;-webkit-mask:var(--i-hospital) center/contain no-repeat;mask:var(--i-hospital) center/contain no-repeat}
 [data-state=ACCEPTED] .tw-inquiry-icon{color:var(--tw-green)}
 .tw-inquiry-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
 .tw-inquiry-copy strong{font-size:13px;line-height:18px;font-weight:900;color:var(--tw-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tw-inquiry-copy .tw-pill{height:18px;padding:0 7px;font-size:11px}
-#transport-workspace .tw-btn-confirm{flex:none;min-height:44px;margin:-1px -1px -1px 0;padding:0 11px;border-radius:10px;background:var(--tw-navy);color:#fff;font-size:13px}
+#transport-workspace .tw-confirm-control{
+  position:relative;display:grid;place-items:center;flex:none;width:44px;height:44px;min-height:44px;padding:0;
+  overflow:hidden;border:0;border-radius:12px;background:transparent;color:var(--tw-navy);font-size:0;text-indent:-9999px
+}
+#transport-workspace button.tw-confirm-control{cursor:pointer}
+#transport-workspace button.tw-confirm-control:hover::before{border-color:var(--tw-navy);background:var(--tw-navy-soft)}
+#transport-workspace .tw-confirm-control::before{
+  content:"";width:22px;height:22px;border:2px solid #6f839b;border-radius:6px;background:#fff
+}
+#transport-workspace .tw-confirm-control--checked::before{border-color:var(--tw-green);background:var(--tw-green)}
+#transport-workspace .tw-confirm-control--checked::after{
+  content:"";position:absolute;width:15px;height:15px;background:#fff;-webkit-mask:var(--i-check) center/contain no-repeat;mask:var(--i-check) center/contain no-repeat
+}
 .tw-pill{display:inline-flex;align-items:center;gap:5px;align-self:flex-start;height:22px;padding:0 9px;border-radius:11px;background:#e6ecf4;color:#40576f;font-size:11.5px;font-weight:900;white-space:nowrap}
 .tw-pill:is([data-state=PENDING],[data-state=CHECKING]){background:var(--tw-amber-soft);color:var(--tw-amber)}
 .tw-pill:is([data-state=PENDING],[data-state=CHECKING])::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
@@ -403,21 +420,27 @@
 .tw-cand-why ul{margin:2px 0 4px;padding-left:18px;line-height:1.6}
 .tw-cand-why li{overflow-wrap:anywhere}
 .tw-cand-actions{display:grid;grid-template-columns:1fr 1.5fr;gap:8px;margin-top:6px}
+.tw-cand-actions:has(.tw-confirm-control){grid-template-columns:minmax(0,1fr) 44px;align-items:center}
 .tw-cand-route::before{content:"";width:16px;height:16px;background:currentColor;-webkit-mask:var(--i-route) center/contain no-repeat;mask:var(--i-route) center/contain no-repeat}
 .tw-cand-inquire::before{content:"";width:17px;height:17px;background:currentColor;-webkit-mask:var(--i-hospital) center/contain no-repeat;mask:var(--i-hospital) center/contain no-repeat}
 .tw-cand-link{display:inline-flex;align-items:center;gap:5px;min-height:36px;color:var(--tw-muted);font-size:12px;font-weight:700;text-decoration:underline;text-underline-offset:3px}
 
 /* ---------- Patient review sheet (native dialog) ---------- */
-:is(#transport-review-panel,#transport-command-panel){width:min(480px,calc(100vw - 16px));max-width:calc(100vw - 16px);max-height:min(92dvh,860px);margin:auto auto max(8px,env(safe-area-inset-bottom));padding:0;border:0;border-radius:24px;background:#fff;color:var(--tw-ink);overflow:hidden;box-shadow:0 24px 64px #0d1c2e5c}
-:is(#transport-review-panel,#transport-command-panel)[open]{display:flex;flex-direction:column}
-:is(#transport-review-panel,#transport-command-panel)::backdrop{background:rgb(13 28 46 / .55)}
-@media(min-width:600px){:is(#transport-review-panel,#transport-command-panel){margin:auto}}
-html:has(:is(#transport-review-panel,#transport-command-panel)[open]),body:has(:is(#transport-review-panel,#transport-command-panel)[open]){overflow:hidden;overscroll-behavior:none}
+:is(#transport-review-panel,#transport-command-panel,#transport-progress-log){width:min(480px,calc(100vw - 16px));max-width:calc(100vw - 16px);max-height:min(92dvh,860px);margin:auto auto max(8px,env(safe-area-inset-bottom));padding:0;border:0;border-radius:24px;background:#fff;color:var(--tw-ink);overflow:hidden;box-shadow:0 24px 64px #0d1c2e5c}
+:is(#transport-review-panel,#transport-command-panel,#transport-progress-log)[open]{display:flex;flex-direction:column}
+:is(#transport-review-panel,#transport-command-panel,#transport-progress-log)::backdrop{background:rgb(13 28 46 / .55)}
+@media(min-width:600px){:is(#transport-review-panel,#transport-command-panel,#transport-progress-log){margin:auto}}
+html:has(:is(#transport-review-panel,#transport-command-panel,#transport-progress-log)[open]),body:has(:is(#transport-review-panel,#transport-command-panel,#transport-progress-log)[open]){overflow:hidden;overscroll-behavior:none}
 .transport-review-header{display:flex;align-items:center;gap:10px;flex:none;padding:12px 12px 12px 16px;border-bottom:1px solid var(--tw-line);background:#fff}
 .tw-review-icon{display:grid;place-items:center;flex:none;width:38px;height:38px;border-radius:12px;background:var(--tw-navy-soft);color:var(--tw-navy)}
 .transport-review-header h3{flex:1;min-width:0;color:var(--tw-navy);font-size:17px;font-weight:900;letter-spacing:-.5px;line-height:1.35}
 .transport-review-header h3:focus{outline:none}
 .transport-review-body{flex:1;min-height:0;padding:14px 16px 16px;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.tw-progress-log-list{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.tw-progress-log-list li{padding:10px 12px;border-left:3px solid #8da3bc;border-radius:4px 12px 12px 4px;background:#f2f6fb}
+.tw-progress-log-list p{margin:0!important;color:var(--tw-ink);font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.tw-progress-log-list time{display:block;margin-top:3px;color:var(--tw-muted);font-size:11px;font-variant-numeric:tabular-nums}
+.tw-progress-log-empty{color:var(--tw-muted);font-size:13px}
 #transport-workspace .tw-callout{margin-bottom:14px!important;padding:10px 12px;border-radius:12px;background:var(--tw-navy-soft);color:#3c5674;font-size:12.5px;font-weight:700;line-height:1.55}
 #transport-workspace .tw-callout:empty{display:none}
 #transport-workspace .tw-callout-warn{background:var(--tw-amber-soft);color:var(--tw-amber)}
@@ -548,7 +571,7 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
   #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiry-copy{flex-direction:row;align-items:center;gap:6px}
   #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiry-copy strong{flex:1;white-space:normal;overflow-wrap:anywhere}
   #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-inquiry-copy .tw-pill{flex:none;padding:0 6px;font-size:10.5px}
-  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-btn-confirm{max-width:140px;padding:0 8px;font-size:12px;white-space:normal}
+  #transport-workspace[data-stage=joined][data-reassignment-active=true] .tw-btn-confirm{max-width:44px;padding:0;font-size:0;white-space:nowrap}
 }
 @media(max-width:374px){
   .tw-head-row{padding:8px 10px 4px 12px;gap:6px}
@@ -566,34 +589,31 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
   #transport-workspace:not([data-pending=true]) .tw-send{justify-content:center;width:48px;padding:0;font-size:0}
   #transport-workspace:not([data-pending=true]) .tw-send::before{width:20px;height:20px}
   #transport-workspace .tw-switch{padding:0 11px 0 10px}
-  /* The decision chip takes the whole row so the hospital name is not cut; the other chips wrap under it. */
-  #transport-workspace .tw-inquiries:has(.tw-btn-confirm){flex-wrap:wrap;max-height:40%;overflow-x:hidden;overflow-y:auto}
-  #transport-workspace .transport-inquiry:has(.tw-btn-confirm){flex:1 0 100%;max-width:none}
+  #transport-workspace .tw-inquiries .transport-inquiry:has(.tw-btn-confirm){max-width:100%}
 }
 @media(max-width:330px){.tw-fields{grid-template-columns:1fr}.tw-people [data-role=crew]{display:none}}
 
-/* Keep the title, every participant name and the action controls on separate,
-   unconstrained rows on phone widths instead of clipping the left header. */
+/* Let the title and participants share a row when they fit, then spread actions across the full phone width. */
 @media(max-width:520px){
   #transport-workspace .tw-head-row{
-    display:flex;flex-direction:column;align-items:stretch;gap:4px;padding:8px 10px 6px
+    display:flex;flex-direction:column;align-items:stretch;gap:4px;padding:6px 10px 5px
   }
   #transport-workspace .tw-head-main,
   #transport-workspace[data-stage=joined] .tw-head-main,
   #transport-workspace[data-kb=open] .tw-head-main{
-    display:block;flex:none;min-width:0;order:0
+    display:flex;align-items:center;flex:0 0 auto;flex-wrap:wrap;gap:2px 8px;min-width:0;order:0
   }
-  #transport-workspace .tw-title-line{width:100%}
+  #transport-workspace .tw-title-line{width:auto;flex:0 0 auto}
   #transport-workspace .tw-title-line .tw-title,
   #transport-workspace[data-stage=joined] .tw-title,
   #transport-workspace[data-kb=open] .tw-title{
-    flex:0 1 auto;min-width:0;white-space:normal;overflow:visible;text-overflow:clip
+    flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
   }
   #transport-workspace .tw-people,
   #transport-workspace[data-stage=joined] .tw-people,
   #transport-workspace[data-kb=open] .tw-people{
-    order:1;display:flex;flex:0 0 auto;flex-wrap:wrap;gap:5px;width:100%;min-width:0;
-    margin-top:4px!important;overflow:visible
+    order:0;display:flex;flex:0 0 auto;flex-wrap:wrap;gap:5px;width:auto;max-width:100%;min-width:0;
+    margin:0!important;overflow:visible
   }
   #transport-workspace .tw-people li{display:block;flex:none;max-width:none;overflow:visible}
   #transport-workspace .tw-people:has([data-role=hospital]) li:not([data-role=hospital]){
@@ -603,8 +623,17 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
     position:static;margin-right:5px
   }
   #transport-workspace .tw-head-actions{
-    order:2;display:flex;flex:0 0 auto;flex-wrap:wrap;justify-content:flex-end;width:100%;gap:6px
+    order:2;display:flex;flex:0 0 auto;flex-wrap:wrap;justify-content:space-between;width:100%;gap:6px
   }
+  #transport-workspace .tw-head-actions .tw-round{width:44px;height:44px}
+  #transport-workspace .tw-switch{height:44px}
+  #transport-workspace .tw-assignment-strip{flex-direction:row;align-items:center;gap:6px;padding:6px 10px}
+  #transport-workspace .tw-assignment-meta{flex:0 0 auto;width:auto}
+  #transport-workspace .tw-current-destination{flex:0 0 min(34vw,138px);width:auto;min-width:104px;min-height:44px;padding:6px}
+  #transport-workspace .tw-inquiries{flex:1 1 0;width:0;min-width:0;min-height:55px;flex-direction:row;gap:6px;padding:6px 0;border:0;overflow-x:auto;overflow-y:hidden}
+  #transport-workspace .tw-inquiries:has(.tw-btn-confirm){flex-wrap:nowrap;max-height:none;overflow-x:auto;overflow-y:hidden}
+  #transport-workspace .tw-inquiries .transport-inquiry{flex:0 0 auto;width:auto;max-width:calc(100% - 20px)}
+  #transport-workspace .tw-inquiries .transport-inquiry:has(.tw-btn-confirm){max-width:100%}
   #transport-workspace[data-kb=open] .tw-head{
     display:flex;flex-direction:column;align-items:stretch;gap:0;padding:6px 10px
   }
@@ -637,3 +666,9 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
 #transport-command-warnings { white-space: pre-line; }
 /* The whole sheet body scrolls, so every original report is readable in full. */
 #transport-command-reports { max-height: none; overflow: visible; }
+
+@media(max-width:374px){
+  #transport-workspace .tw-head-actions{gap:4px}
+  #transport-workspace #transport-depart{min-width:0;padding:0 6px;font-size:12px;white-space:nowrap}
+  #transport-workspace .tw-switch{gap:4px;padding:0 8px;font-size:13px}
+}

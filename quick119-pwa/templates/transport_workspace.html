@@ -1,5 +1,5 @@
 <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-<link rel="stylesheet" href="/static/transport-workspace.css?v=23">
+<link rel="stylesheet" href="/static/transport-workspace.css?v=28">
 <section id="transport-workspace" class="tw" aria-label="접수 채팅과 이송 지원" data-view="chat" data-stage="report" data-connection="pending" data-voice="idle" data-tts-cloud="{{ 'enabled' if tts_cloud else 'disabled' }}">
   <header class="tw-head">
     <div class="tw-head-row">
@@ -12,7 +12,8 @@
       </div>
       <div class="tw-head-actions">
         <button type="button" id="transport-depart" class="tw-btn tw-btn-primary" hidden disabled>이송 출발</button>
-        <button type="button" id="transport-tts-toggle" class="tw-round tw-tts" aria-pressed="false" aria-label="시스템 메시지 낭독" title="시스템 메시지 낭독" aria-describedby="transport-tts-status{% if tts_cloud %} transport-tts-provider{% endif %}"><span class="tw-i" aria-hidden="true"></span></button>
+        <button type="button" id="transport-tts-toggle" class="tw-round tw-tts" aria-pressed="false" aria-label="상태 변화 음성 알림" title="상태 변화 음성 알림" aria-describedby="transport-tts-status{% if tts_cloud %} transport-tts-provider{% endif %}"><span class="tw-i" aria-hidden="true"></span></button>
+        <button type="button" id="transport-progress-log-toggle" class="tw-round tw-progress-log" aria-label="진행 기록" title="진행 기록" aria-haspopup="dialog" aria-controls="transport-progress-log" aria-expanded="false" hidden><span class="tw-i tw-i--history" aria-hidden="true"></span><span id="transport-progress-log-count" class="tw-log-count" aria-hidden="true" hidden></span></button>
         <button type="button" id="transport-patient-info" class="tw-round" aria-label="환자 정보 확인" title="환자 정보 확인"><span class="tw-i tw-i--patient" aria-hidden="true"></span></button>
         <button type="button" id="transport-toggle" class="tw-switch" aria-controls="transport-gps transport-chat" aria-expanded="true"><span class="tw-switch-icon" aria-hidden="true"></span><span id="transport-toggle-label">지도</span><span id="transport-unread" class="tw-badge" hidden aria-label="새 의료진 메시지"></span></button>
         <a id="transport-patient-list" class="tw-round tw-patient-list" href="/patients" aria-label="환자 목록" title="환자 목록"><span class="tw-i tw-i--patient-list" aria-hidden="true"></span></a>
@@ -28,8 +29,10 @@
   <div class="tw-updates">
     <p id="transport-connection" class="tw-banner tw-connection" role="status" aria-live="polite">접수 채팅을 준비하고 있습니다.</p>
     <p id="transport-error" class="tw-banner tw-error" role="alert" hidden></p>
-    <div class="tw-assignment-strip">
-      <div id="transport-current-destination" class="tw-current-destination" role="status" hidden></div>
+    <div id="transport-assignment-strip" class="tw-assignment-strip" hidden>
+      <div id="transport-assignment-meta" class="tw-assignment-meta">
+        <div id="transport-current-destination" class="tw-current-destination" role="status" hidden></div>
+      </div>
       <div id="transport-inquiries" class="tw-inquiries" aria-label="수용 문의 및 목적지 확정" aria-live="polite"></div>
     </div>
     {% if tts_cloud %}<p id="transport-tts-provider" class="tw-room-note">온라인 낭독을 켜면 읽을 문장을 Microsoft 또는 기기 음성 제공자가 처리합니다.</p>{% endif %}
@@ -176,6 +179,19 @@
       <button type="submit" id="transport-review-submit" class="tw-btn tw-btn-cta" form="transport-review-form">확인하고 탐색 시작</button>
     </footer>
   </dialog>
+  <dialog id="transport-progress-log" class="transport-review" aria-labelledby="transport-progress-log-title">
+    <header class="transport-review-header">
+      <h3 id="transport-progress-log-title" tabindex="-1">진행 기록</h3>
+      <button type="button" id="transport-progress-log-close-top" class="tw-round tw-round-sm" aria-label="진행 기록 닫기" title="닫기"><span class="tw-i tw-i--close" aria-hidden="true"></span></button>
+    </header>
+    <div class="transport-review-body">
+      <p class="tw-callout">병원 문의와 주요 상태 변화를 시간순으로 확인할 수 있습니다.</p>
+      <ol id="transport-progress-log-list" class="tw-progress-log-list" aria-label="진행 기록"></ol>
+    </div>
+    <footer class="tw-dialog-actions">
+      <button type="button" id="transport-progress-log-close" class="tw-btn tw-btn-ghost">닫기</button>
+    </footer>
+  </dialog>
 </section>
 <script defer src="/static/vendor/leaflet/leaflet.js"></script>
 <script defer src="/static/car-routes.js?v=15"></script>
@@ -184,4 +200,4 @@
 <script defer src="/static/voice-intake.js"></script>
 <script defer src="/static/patient-review.js?v=9"></script>
 <script defer src="/static/intake-commands.js?v=6"></script>
-<script defer src="/static/hospital-chat.js?v=28"></script>
+<script defer src="/static/hospital-chat.js?v=32"></script>

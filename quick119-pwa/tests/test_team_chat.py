@@ -384,7 +384,11 @@ class LiveTeamChat(unittest.TestCase):
               const workspace=document.getElementById('transport-workspace');
               const head=workspace.querySelector('.tw-head');
               const title=workspace.querySelector('.tw-title');
+              const titleLine=workspace.querySelector('.tw-title-line').getBoundingClientRect();
               const people=workspace.querySelector('.tw-people');
+              const peopleBounds=people.getBoundingClientRect();
+              const actionsBounds=workspace.querySelector('.tw-head-actions').getBoundingClientRect();
+              const headBounds=head.getBoundingClientRect();
               const visible=element => getComputedStyle(element).display !== 'none';
               const participants=[...people.children].map(item => ({
                 role:item.dataset.role,text:item.textContent.trim(),visible:visible(item),
@@ -394,14 +398,20 @@ class LiveTeamChat(unittest.TestCase):
               const actions=[...workspace.querySelector('.tw-head-actions').children]
                 .filter(visible).map(item=>({left:item.getBoundingClientRect().left,
                   right:item.getBoundingClientRect().right}));
+              const separated=titleLine.bottom<=peopleBounds.top || peopleBounds.bottom<=titleLine.top
+                || titleLine.right<=peopleBounds.left || peopleBounds.right<=titleLine.left;
               return {title:title.textContent.trim(),titleFits:title.scrollWidth<=title.clientWidth,
-                view:workspace.dataset.view,width:innerWidth,headBottom:head.getBoundingClientRect().bottom,
+                view:workspace.dataset.view,width:innerWidth,headHeight:headBounds.height,
+                headerBlocksSeparated:separated,actionsBounds:{left:actionsBounds.left,right:actionsBounds.right},
                 participants,actions};
             })())"""))
             self.assertEqual(metrics["width"], width, metrics)
             self.assertTrue(metrics["title"], metrics)
             self.assertTrue(metrics["titleFits"], metrics)
-            self.assertLessEqual(metrics["headBottom"], 844, metrics)
+            self.assertLessEqual(metrics["headHeight"], 116, metrics)
+            self.assertTrue(metrics["headerBlocksSeparated"], metrics)
+            self.assertLessEqual(metrics["actionsBounds"]["left"], 12, metrics)
+            self.assertGreaterEqual(metrics["actionsBounds"]["right"], width - 12, metrics)
             self.assertTrue({"system", "crew", "hospital"}.issubset(
                 {item["role"] for item in metrics["participants"]}), metrics)
             for item in metrics["participants"]:
@@ -420,20 +430,202 @@ class LiveTeamChat(unittest.TestCase):
                             deviceScaleFactor=1, mobile=True)
                 wait(f"innerWidth === {width}")
                 assert_header_fits(width)
-                if width in (360, 412):
-                    image = mobile.call("Page.captureScreenshot", format="png")
-                    (self.run_dir / f"mobile-header-chat-{width}.png").write_bytes(
-                        base64.b64decode(image["data"]))
+                image = mobile.call("Page.captureScreenshot", format="png")
+                (self.run_dir / f"mobile-header-chat-{width}.png").write_bytes(
+                    base64.b64decode(image["data"]))
             with self.subTest(width=width, view="map"):
                 evaluate("document.getElementById('transport-toggle').click()")
                 wait("document.getElementById('transport-workspace').dataset.view === 'gps'")
                 assert_header_fits(width)
-                if width in (360, 412):
-                    image = mobile.call("Page.captureScreenshot", format="png")
-                    (self.run_dir / f"mobile-header-map-{width}.png").write_bytes(
-                        base64.b64decode(image["data"]))
+                image = mobile.call("Page.captureScreenshot", format="png")
+                (self.run_dir / f"mobile-header-map-{width}.png").write_bytes(
+                    base64.b64decode(image["data"]))
                 evaluate("document.getElementById('transport-toggle').click()")
                 wait("document.getElementById('transport-workspace').dataset.view === 'chat'")
+
+    def test_inquiry_statuses_stay_in_tray_and_history_opens_separately(self):
+        import base64
+        from chrome_driver import Chrome
+
+        pid = self.create_case()
+        inquiries = self.call("POST", f"/api/patients/{pid}/inquiries",
+                              {"hospital_ids": ["H01", "H02", "H03"]})["inquiries"]
+        mobile = Chrome(Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
+                        self.run_dir / ("inquiry-log-profile-" + uuid4().hex))
+        self.addCleanup(mobile.close)
+        mobile.call("Page.enable")
+        mobile.call("Emulation.setDeviceMetricsOverride", width=412, height=844,
+                    deviceScaleFactor=1, mobile=True)
+        mobile.call("Page.navigate", url=f"{self.api_url}/transport/?pid={pid}")
+
+        def evaluate(source):
+            result = mobile.call("Runtime.evaluate", expression=source, awaitPromise=True, returnByValue=True)
+            self.assertNotIn("exceptionDetails", result, str(result))
+            return result.get("result", {}).get("value")
+
+        def wait(condition):
+            deadline = time.monotonic() + 16
+            while time.monotonic() < deadline:
+                try:
+                    if evaluate("Boolean(" + condition + ")"):
+                        return
+                except RuntimeError as failure:
+                    if "context" not in str(failure).lower():
+                        raise
+                time.sleep(.08)
+            self.fail("Timed out: " + condition)
+
+        wait("document.querySelector('#transport-workspace[data-connection=live]')")
+        wait("document.querySelectorAll('#transport-inquiries .transport-inquiry').length === 3")
+        self.assertEqual(evaluate("document.getElementById('transport-tts-toggle').getAttribute('aria-pressed')"),
+                         "true")
+        for inquiry, action, handler in zip(inquiries, ("accept", "decline"), ("가상 수용", "가상 거절")):
+            response = {"action": action, "handled_by": handler}
+            if action == "decline":
+                response["reason"] = "기타"
+            self.call("POST", f"/api/inquiries/{inquiry['id']}/respond", response)
+        history_items = self.call("GET", f"/api/patients/{pid}/conversation")["items"]
+        expected_log_count = sum(item.get("kind") == "system" and item.get("sender_role") == "system"
+                                 and bool(item.get("type")) for item in history_items)
+        wait("""(() => {
+          const states=[...document.querySelectorAll('#transport-inquiries .transport-inquiry')]
+            .map(row=>row.dataset.state);
+          return states.includes('ACCEPTED') && states.includes('DECLINED') && states.includes('PENDING');
+        })()""")
+        wait("document.querySelector('[data-transport-confirm]') && !document.querySelector('[data-transport-confirm]').disabled")
+        rows = json.loads(evaluate("""JSON.stringify([...document.querySelectorAll(
+          '#transport-inquiries .transport-inquiry')].map(row=>({
+            name:row.querySelector('.tw-inquiry-copy strong').textContent.trim(),
+            state:row.dataset.state,confirm:!!row.querySelector('[data-transport-confirm]'),
+            enabled:!!row.querySelector('[data-transport-confirm]:not(:disabled)')})))"""))
+        self.assertEqual(len(rows), 3, rows)
+        self.assertEqual({row["state"] for row in rows}, {"ACCEPTED", "DECLINED", "PENDING"}, rows)
+        self.assertEqual(sum(row["confirm"] for row in rows), 1, rows)
+        self.assertTrue(any(row["enabled"] for row in rows), rows)
+        wait("""[...document.querySelectorAll('#transport-inquiries .transport-inquiry')]
+          .every(row=>row.getAnimations().every(animation=>animation.playState==='finished'))""")
+        chat_text = evaluate("document.getElementById('transport-messages').innerText")
+        for inquiry in inquiries:
+            self.assertNotIn(inquiry["hospital_name"], chat_text)
+        history_button = json.loads(evaluate("""JSON.stringify((() => {
+          const button=document.getElementById('transport-progress-log-toggle');
+          const rect=button.getBoundingClientRect();
+          return {inHeader:button.parentElement.classList.contains('tw-head-actions'),
+            width:rect.width,height:rect.height,label:button.getAttribute('aria-label'),
+            title:button.title,count:document.getElementById('transport-progress-log-count').textContent};
+        })())"""))
+        self.assertTrue(history_button["inHeader"], history_button)
+        self.assertGreaterEqual(history_button["width"], 44, history_button)
+        self.assertGreaterEqual(history_button["height"], 44, history_button)
+        self.assertEqual(history_button["label"], "진행 기록", history_button)
+        self.assertEqual(history_button["title"], "진행 기록", history_button)
+        self.assertEqual(history_button["count"], str(expected_log_count), history_button)
+
+        def assert_horizontal_tray():
+            layout = json.loads(evaluate("""JSON.stringify((() => {
+              const rail=document.getElementById('transport-inquiries');
+              const row=rail.querySelector('.transport-inquiry');
+              const control=row.querySelector('[data-transport-confirm]');
+              const action=control.getBoundingClientRect();
+              const card=row.getBoundingClientRect(), viewport=rail.getBoundingClientRect();
+              return {direction:getComputedStyle(rail).flexDirection,scrolls:rail.scrollWidth>rail.clientWidth,
+                actionFits:action.right<=card.right+1 && action.left>=card.left-1,
+                actionVisible:action.right<=viewport.right+1 && action.left>=viewport.left-1,
+                width:action.width,height:action.height,label:control.getAttribute('aria-label'),
+                button:control.tagName};
+            })())"""))
+            self.assertEqual(layout["direction"], "row", layout)
+            self.assertTrue(layout["scrolls"], layout)
+            self.assertTrue(layout["actionFits"], layout)
+            self.assertTrue(layout["actionVisible"], layout)
+            self.assertEqual((layout["width"], layout["height"]), (44, 44), layout)
+            self.assertEqual(layout["button"], "BUTTON", layout)
+            self.assertIn("목적지 확정", layout["label"], layout)
+
+        assert_horizontal_tray()
+
+        output = self.run_dir
+        (output / "inquiry-tray-412.png").write_bytes(
+            base64.b64decode(mobile.call("Page.captureScreenshot", format="png")["data"]))
+        mobile.call("Emulation.setDeviceMetricsOverride", width=360, height=844,
+                    deviceScaleFactor=1, mobile=True)
+        wait("innerWidth === 360")
+        self.assertTrue(evaluate("document.documentElement.scrollWidth<=innerWidth"))
+        assert_horizontal_tray()
+        (output / "inquiry-tray-360.png").write_bytes(
+            base64.b64decode(mobile.call("Page.captureScreenshot", format="png")["data"]))
+        evaluate("document.getElementById('transport-progress-log-toggle').click()")
+        wait("document.getElementById('transport-progress-log').open")
+        wait("""document.getElementById('transport-progress-log').getAnimations()
+          .every(animation=>animation.playState==='finished')""")
+        self.assertTrue(evaluate("document.documentElement.scrollWidth<=innerWidth"))
+        (output / "inquiry-log-360.png").write_bytes(
+            base64.b64decode(mobile.call("Page.captureScreenshot", format="png")["data"]))
+        evaluate("document.getElementById('transport-progress-log-close').click()")
+        wait("!document.getElementById('transport-progress-log').open")
+        evaluate("""window.__originalFetch=window.fetch;window.__confirmCalls=0;
+          window.fetch=(url,options)=>{
+            if(String(url).endsWith('/confirm')){
+              window.__confirmCalls++;
+              if(window.__confirmCalls===1)
+                return Promise.resolve(Response.json({error:'SYNTHETIC_FAILURE',message:'가상 실패'}, {status:503}));
+            }
+            return window.__originalFetch(url,options);
+          };
+          document.addEventListener('quick119:route-select',event=>event.stopImmediatePropagation(),true);""")
+        evaluate("document.querySelector('[data-transport-confirm]').click()")
+        wait("!document.getElementById('transport-error').hidden")
+        self.assertIn("가상 실패", evaluate("document.getElementById('transport-error').textContent"))
+        self.assertIsNone(self.call("GET", f"/api/patients/{pid}/conversation")["active_hospital_session"])
+        self.assertTrue(evaluate("!document.querySelector('#transport-destination .tw-confirm-control--checked')"))
+        wait("document.querySelector('[data-transport-confirm]:not(:disabled)')")
+
+        evaluate("""const control=document.querySelector('[data-transport-confirm]');
+          control.click();control.click();""")
+        wait("""document.querySelector('#transport-workspace[data-stage=joined]')
+          && window.__confirmCalls===2""")
+        room = self.call("GET", f"/api/patients/{pid}/conversation")
+        self.assertEqual(room["active_hospital_session"]["hospital_id"], inquiries[0]["hospital_id"])
+        evaluate("document.getElementById('transport-toggle').click()")
+        wait("document.getElementById('transport-workspace').dataset.view==='gps'")
+        wait("document.querySelector('#transport-destination .tw-confirm-control--checked')")
+        checked = evaluate("document.querySelector('#transport-destination .tw-confirm-control--checked').getAttribute('aria-label')")
+        self.assertIn("목적지 확정됨", checked)
+        self.assertEqual(evaluate("document.querySelector('#transport-destination .tw-confirm-control--checked').getBoundingClientRect().width"), 44)
+
+        mobile.call("Emulation.setDeviceMetricsOverride", width=360, height=844,
+                    deviceScaleFactor=1, mobile=True)
+        wait("innerWidth===360")
+        self.assertTrue(evaluate("document.documentElement.scrollWidth<=innerWidth"))
+        self.assertTrue(evaluate("document.querySelector('#transport-destination .tw-confirm-control--checked').getBoundingClientRect().right<=innerWidth"))
+        (output / "after-confirm-360.png").write_bytes(
+            base64.b64decode(mobile.call("Page.captureScreenshot", format="png")["data"]))
+
+        mobile.call("Emulation.setDeviceMetricsOverride", width=412, height=844,
+                    deviceScaleFactor=1, mobile=True)
+        wait("innerWidth === 412")
+        self.assertTrue(evaluate("document.documentElement.scrollWidth<=innerWidth"))
+        self.assertTrue(evaluate("document.querySelector('#transport-destination .tw-confirm-control--checked').getBoundingClientRect().right<=innerWidth"))
+        (output / "after-confirm-412.png").write_bytes(
+            base64.b64decode(mobile.call("Page.captureScreenshot", format="png")["data"]))
+        evaluate("document.getElementById('transport-progress-log-toggle').click()")
+        wait("document.getElementById('transport-progress-log').open")
+        wait("""document.getElementById('transport-progress-log').getAnimations()
+          .every(animation=>animation.playState==='finished')""")
+        log_text = evaluate("document.getElementById('transport-progress-log-list').innerText")
+        final_history_items = self.call("GET", f"/api/patients/{pid}/conversation")["items"]
+        final_log_count = sum(item.get("kind") == "system" and item.get("sender_role") == "system"
+                              and bool(item.get("type")) for item in final_history_items)
+        self.assertEqual(evaluate("document.querySelectorAll('#transport-progress-log-list li').length"),
+                         final_log_count)
+        for inquiry in inquiries:
+            self.assertIn(inquiry["hospital_name"], log_text)
+        self.assertEqual(evaluate("document.getElementById('transport-tts-toggle').getAttribute('aria-pressed')"),
+                         "true")
+        (output / "inquiry-log-412.png").write_bytes(
+            base64.b64decode(mobile.call("Page.captureScreenshot", format="png")["data"]))
+        evaluate("document.getElementById('transport-progress-log-close').click()")
+        wait("!document.getElementById('transport-progress-log').open")
 
     def test_patient_list_explains_legacy_server_metadata_mismatch(self):
         from chrome_driver import Chrome
@@ -858,7 +1050,7 @@ class LiveTeamChat(unittest.TestCase):
         staff.call('Page.navigate', url=self.api_url + '/hospital/?hid=' + alternative['hospital_id'] + '&pid=' + pid)
         wait(staff, "document.querySelector('[data-act=accept]')")
         evaluate(staff, "document.getElementById('handler').value='가상 대체 의료진';document.getElementById('handler').dispatchEvent(new Event('input'));document.querySelector('[data-act=accept]').click()")
-        wait(mobile, "document.querySelector('[data-transport-confirm]')?.textContent.includes('새 목적지로 확정')")
+        wait(mobile, "document.querySelector('[data-transport-confirm]')?.getAttribute('aria-label')==='새 목적지로 확정'")
         evaluate(mobile, "document.querySelector('[data-transport-confirm]').click()")
         alternative_name = json.dumps(alternative['hospital_name'])
         wait(mobile, "Array.from(document.querySelectorAll('.tw-system-group-headline')).some(headline => "
@@ -869,6 +1061,9 @@ class LiveTeamChat(unittest.TestCase):
         self.assertEqual(reassigned['destination_hospital_id'], alternative['hospital_id'])
         self.assertEqual(reassigned['state'], 'IN_TRANSIT')
         self.assertFalse(reassigned['needs_adjustment'])
+        confirmed_label = evaluate(mobile, "document.querySelector('#transport-destination .tw-confirm-control--checked')?.getAttribute('aria-label')")
+        self.assertIn(alternative['hospital_name'], confirmed_label)
+        self.assertIn('목적지 확정됨', confirmed_label)
         self.call('POST', path + '/change-destination', {'inquiry_id': alternative['id']}, status=409)
         self.call('GET', f"/api/hospitals/H01/patients/{pid}/conversation", status=403)
 
