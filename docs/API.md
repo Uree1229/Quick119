@@ -89,7 +89,7 @@ ACCEPTED ─10분 경과─▶ EXPIRED      어느 단계든 ─취소·다른 �
 | 문의 취소 | `POST /api/patients/{pid}/inquiries/{iid}/cancel` | `{"reason": "증상 호전"}` | P29 |
 | 병원 질문에 답변 | `POST /api/patients/{pid}/inquiries/{iid}/answer` | `{"answer": "식은땀 있음"}` | P23 |
 | 목적지 확정 | `POST /api/patients/{pid}/confirm` | `{"inquiry_id": 1}` | P27, P28 |
-| 출발 | `POST /api/patients/{pid}/depart` | `{"lat": .., "lon": ..}` (생략하면 입력 위치) | P31, P34 |
+| 출발 | `POST /api/patients/{pid}/depart` | 선택 `lat`, `lon` (생략하면 저장된 위치), 선택 `expected_version` (표시된 환자 버전과 달라지면 409) | P31, P34 |
 | 목적지 변경 | `POST /api/patients/{pid}/change-destination` | `{"inquiry_id": 5, "lat": .., "lon": ..}` | P38 |
 | 이송 취소 | `POST /api/patients/{pid}/cancel` | `{"reason": "119 이송"}` | P41 |
 

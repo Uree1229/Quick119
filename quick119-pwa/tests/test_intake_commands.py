@@ -104,6 +104,60 @@ class CommandChat(unittest.TestCase):
                 self.assertEqual(result['effect'], 'voice_command_needs_clarification')
                 self.assertEqual(result['draft']['fields'], original)
 
+    def test_child_demographics_and_ambiguous_reports(self):
+        for source in ('text', 'speech'):
+            stated = self.send('10살 남자아이, 보호자 동행', source=source)
+            fields = stated['draft']['fields']
+            self.assertEqual((fields['age'], fields['sex']), (10, 'male'))
+        for text, alternatives in [
+            ('보호자는 32세 여성', []), ('여자아이가 아닙니다', []),
+            ('5살이 아닙니다', []), ('열 살 여자아이인지는 모르겠습니다', []),
+            ('8살 여자아이', ['보호자가 8살 여자아이']),
+        ]:
+            with self.subTest(text=text):
+                result = self.send(text, source='speech', alternatives=alternatives)
+                self.assertEqual(result['effect'], 'voice_command_needs_clarification')
+                self.assertEqual(result['message']['body'], text)
+                self.assertEqual(result['draft']['fields'], fields)
+        different = self.send('성별 남자 아니라 여자야')
+        self.assertEqual(different['draft']['fields']['sex'], 'female')
+
+    def test_unavailable_observations_never_echo_a_prior_value_as_current(self):
+        self.send('10살 남자아이, 맥박 88회')
+        for label in ('나이', '성별', '증상', '의식', '호흡', '혈압', '맥박', '산소포화도', '체온', '호흡수', '혈당', '발생 시각'):
+            for status in ('미확인', '미측정', '확인 불가'):
+                with self.subTest(label=label, status=status):
+                    text = f'{label} {status}'
+                    result = self.send(text)
+                    self.assertIsNone(result['action'])
+                    reply = result['system_items'][0]['data']['reply']
+                    self.assertIn(f'{label}: {status}', reply)
+                    self.assertNotIn('88', reply)
+                    self.assertNotIn('남성', reply)
+                    self.assertEqual(result['message']['body'], text)
+                    if label in ('나이', '성별', '맥박'):
+                        self.assertIn('이전 기록 유지', reply)
+        for text, value in [('성별 읽어 줘', '남성'), ('맥박 읽어 줘', '88')]:
+            result = self.send(text)
+            self.assertEqual(result['action'], 'review')
+            self.assertIn(value, result['system_items'][0]['data']['reply'])
+        result = self.send('맥박 95회', source='speech', alternatives=['맥박 미측정'])
+        self.assertEqual(result['draft']['fields']['pulse'], 88)
+        self.assertIn('다시 알려', result['system_items'][0]['data']['reply'])
+
+    def test_incomplete_commands_record_once_and_preserve_state(self):
+        for phrase, action in [('취소', 'undo'), ('수정', 'edit'), ('나이 수정', 'edit')]:
+            with self.subTest(phrase=phrase):
+                result = self.send(phrase)
+                self.assertEqual((result['action'], result['effect']), (action, 'voice_command_needs_clarification'))
+                self.assertFalse(result['draft']['fields'])
+                self.assertTrue(intake.input_report(self.ctx, self.pid)['duplicate'])
+                count = self.ctx.conn.execute('SELECT count(*) FROM voice_utterances WHERE utterance_id=?',
+                                              (result['input_id'],)).fetchone()[0]
+                self.assertEqual(count, 1)
+        self.assertEqual(self.send('전송')['effect'], 'explicit_submit_api_required')
+        self.assertEqual(self.ctx.conn.execute('SELECT count(*) FROM inquiries').fetchone()[0], 0)
+
     def test_search_and_lookup_variants(self):
         self.send('20세 남성')
         for phrase in ('탐색시작해줘', '근처 응급실 찾아봐 주세요', '병원 추천해 주세요', '수용 가능한 병원을 알아봐줄래?',

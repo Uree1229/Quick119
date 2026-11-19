@@ -51,16 +51,23 @@ class GatewayGuards(unittest.TestCase):
         from fastapi import HTTPException
         from synthetic_routes import demo_route
         request = Item(client=Item(host='127.0.0.1'))
-        payload = Item(origin=Item(lat=35.1595, lon=126.8526), destination=Item(lat=35.1715, lon=126.8326))
+        payload = Item(origin=Item(lat=37.5051, lon=126.9573),
+                       destination=Item(lat=37.50707428493414, lon=126.96079378447554))
         with patch.dict(os.environ, QUICK119_SYNTHETIC_ROUTES='0'):
             self.assertIsNone(demo_route(request, payload))
         with patch.dict(os.environ, QUICK119_SYNTHETIC_ROUTES='1'):
-            self.assertEqual(demo_route(request, payload)['provider'], 'synthetic')
+            result = demo_route(request, payload)
+            self.assertEqual(result['provider'], 'synthetic')
+            self.assertEqual(result['coordinates'], [[payload.origin.lon, payload.origin.lat],
+                                                     [payload.destination.lon, payload.destination.lat]])
             with self.assertRaises(HTTPException):
                 demo_route(Item(client=Item(host='192.168.0.50')), payload)
-            payload.destination.lat = 37.5
             with self.assertRaises(HTTPException):
-                demo_route(request, payload)
+                demo_route(request, Item(origin=Item(lat=35.1595, lon=126.8526), destination=payload.destination))
+            for lat, lon in [(35.1715, 126.8326), (37.5, 126.95)]:
+                with self.subTest(lat=lat, lon=lon), self.assertRaises(HTTPException):
+                    payload.destination = Item(lat=lat, lon=lon)
+                    demo_route(request, payload)
 
     def test_remote_url_credentials_paths_and_redirect_targets_rejected(self):
         for url in ("http://example.com:80", "http://127.0.0.1:80/private", "http://user:pass@127.0.0.1:80",
@@ -103,15 +110,17 @@ class LiveTeamChat(unittest.TestCase):
         cls.team_db = cls.run_dir / "team.db"
         cls.local_db = cls.run_dir / "quick119.db"
         ready = cls.run_dir / "ready.json"
-        team_python = ROOT / ".local/team-venv/Scripts/python.exe"
-        cls.spawn([str(team_python), str(ROOT / "scripts/run-team-chat.py"), "--port", "0",
+        cls.spawn([sys.executable, str(ROOT / "scripts/run-team-chat.py"), "--port", "0",
                    "--db", str(cls.team_db), "--ready-file", str(ready)], clean_env(), "team")
         deadline = time.monotonic() + 30
         while not ready.exists():
             if cls.processes[0].poll() is not None or time.monotonic() > deadline:
                 raise RuntimeError("Team runtime failed. See " + str(cls.run_dir / "team.log"))
             time.sleep(.05)
-        cls.team_url = json.loads(ready.read_text(encoding="utf-8"))["base_url"]
+        readiness = json.loads(ready.read_text(encoding="utf-8"))
+        if Path(readiness["source_root"]).resolve() != ROOT.parent:
+            raise AssertionError("Team API must run from the same checkout as the PWA and hospital UI.")
+        cls.team_url = readiness["base_url"]
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
@@ -240,17 +249,43 @@ class LiveTeamChat(unittest.TestCase):
             js(f"mic.emit({json.dumps(text)},true,{json.dumps(alternatives)}); mic.stop()")
             wait("!document.querySelector('#transport-message').value && !document.querySelector('#transport-send').disabled")
 
+        ready = "document.querySelector('#transport-voice-start:enabled') && new URLSearchParams(location.search).has('pid')"
+        bubble_texts = "Array.from(document.querySelectorAll('#transport-messages .transport-bubble'), el => el.innerText)"
+        welcome = '환자 상태를 알려주세요.'
+        report = '10살 남자아이'
+        receipt = '나이: 10세\n성별: 남성'
+
+        # Exercise separate cases so speech cannot reuse the age and sex from typed input.
         mobile.call('Page.navigate', url=self.api_url + '/transport/')
-        wait("document.querySelector('#transport-voice-start') && !document.querySelector('#transport-voice-start').disabled")
+        wait(ready)
+        self.assertEqual(js(bubble_texts), [welcome])
+        typed_pid = js("new URLSearchParams(location.search).get('pid')")
+        js("document.querySelector('#transport-message').value=" + json.dumps(report) + ";"
+           "document.querySelector('#transport-message').dispatchEvent(new Event('input'));"
+           "document.querySelector('#transport-message-form').requestSubmit()")
+        wait(bubble_texts + '.includes(' + json.dumps(receipt) + ')')
+        self.assertEqual(js(bubble_texts), [welcome, report, receipt])
+        js('window.beforeReceiptReload = true')
+        mobile.call('Page.reload')
+        wait('!window.beforeReceiptReload && ' + ready)
+        self.assertEqual(js(bubble_texts), [welcome, report, receipt])
+
+        js('window.beforeNextCase = true')
+        mobile.call('Page.navigate', url=self.api_url + '/transport/')
+        wait('!window.beforeNextCase && ' + ready)
         pid = js("new URLSearchParams(location.search).get('pid')")
+        self.assertNotEqual(pid, typed_pid)
         route = '/api/patients/' + pid
         def draft():
             return self.call('GET', route + '/intake-draft')['draft']
 
         js("document.querySelector('#transport-voice-start').click(); mic.emit('전송해줘',false); mic.stop()")
         self.assertIsNone(draft())
-        say('20세')
-        self.assertEqual(draft()['fields']['age'], 20)
+        say(report)
+        wait(bubble_texts + '.includes(' + json.dumps(receipt) + ')')
+        self.assertEqual(js(bubble_texts), [welcome, report, receipt])
+        self.assertEqual(draft()['fields']['age'], 10)
+        self.assertEqual(draft()['fields']['sex'], 'male')
         say('나이 21세로 수정해줘')
         self.assertEqual(draft()['fields']['age'], 21)
         say('전송해줘', ['전송하지 마'])
@@ -290,7 +325,7 @@ class LiveTeamChat(unittest.TestCase):
 
         brand_bar = "getComputedStyle(document.querySelector('.app-header')).display !== 'none'"
         typing = "document.getElementById('transport-workspace').dataset.kb === 'open'"
-        ready = "document.getElementById('transport-case')?.textContent.includes('Q119-TEST-') && !document.getElementById('transport-message').disabled"
+        ready = "document.querySelector('#transport-workspace[data-connection=live] #transport-message:enabled') && new URLSearchParams(location.search).has('pid')"
         for width, full, reduced, partial, min_log in ((360, 740, 450, 620, 200), (844, 390, 220, 280, 30)):
             with self.subTest(width=width, full=full):
                 screen(width, full)
@@ -312,7 +347,7 @@ class LiveTeamChat(unittest.TestCase):
                     # Partial dismissal stays in typing mode, but the shell must follow the new visible height.
                     wait(f"Math.abs(document.querySelector('.app-shell--workspace').getBoundingClientRect().height - {height}) < 2")
                     self.assertTrue(js(typing))
-                    for selector in ('#transport-send', '#transport-message', '.tw-synthetic-line'):
+                    for selector in ('#transport-send', '#transport-message'):
                         top, bottom = js(f"((r) => [r.top, r.bottom])(document.querySelector('{selector}').getBoundingClientRect())")
                         self.assertGreaterEqual(top, -1, selector)
                         self.assertLessEqual(bottom, height + 1, selector)
@@ -391,44 +426,74 @@ class LiveTeamChat(unittest.TestCase):
         mobile.call('Page.addScriptToEvaluateOnNewDocument', source=guard + """
         window.gpsWatchCount=0;window.gpsClears=0;
         Object.defineProperty(navigator,'geolocation',{value:{
-          getCurrentPosition(ok){ok({coords:{latitude:35.1595,longitude:126.8526,accuracy:10},timestamp:Date.now()});},
+          getCurrentPosition(ok){ok({coords:{latitude:37.5051,longitude:126.9573,accuracy:10},timestamp:Date.now()});},
           watchPosition(ok){window.gpsWatchCount++;window.mockGPS=ok;return window.gpsWatchCount;},
           clearWatch(){window.gpsClears++;}
         }});
-        const realFetch=window.fetch;
-        window.fetch=(url,options)=>{
-          if(url==='/api/routes/car')return Promise.resolve(new Response(JSON.stringify({code:'ok',distance_m:2500,duration_sec:300,
-            coordinates:[[126.8526,35.1595],[126.8326,35.1715]],cached:false}),{headers:{'Content-Type':'application/json'}}));
-          return realFetch(url,options);
-        };
         """)
         staff.call('Page.addScriptToEvaluateOnNewDocument', source=guard)
         mobile.call('Page.navigate', url=self.api_url + '/')
         wait(mobile, "document.querySelector('.emergency-cta')")
         evaluate(mobile, "document.querySelector('.emergency-cta').click()")
-        wait(mobile, "document.getElementById('transport-case').textContent.includes('Q119-TEST-') && !document.getElementById('transport-send').disabled")
+        ready = "document.querySelector('#transport-workspace[data-connection=live] #transport-send:enabled') && new URLSearchParams(location.search).has('pid')"
+        wait(mobile, ready)
         pid = evaluate(mobile, "new URLSearchParams(location.search).get('pid')")
+        self.assertTrue(pid.startswith('Q119-TEST-'))
+        first_screen = evaluate(mobile, 'document.body.innerText')
+        for removed in ('시스템과 구급대의 현장 접수를 시작했습니다', '가상 접수:', pid,
+                        '대화 안내 · 연결 관리', '실제 환자정보 입력 금지', '개발·테스트 환경'):
+            self.assertNotIn(removed, first_screen)
         self.assertFalse(evaluate(mobile, "document.getElementById('transport-chat').hidden"))
         self.assertTrue(evaluate(mobile, "document.getElementById('transport-gps').hidden"))
         self.assertEqual(evaluate(mobile, "document.getElementById('transport-participants').children.length"), 2)
         evaluate(mobile, "document.getElementById('transport-message').value='병원 확정 전 가상 환자 상태 보고';document.getElementById('transport-message').dispatchEvent(new Event('input'));document.getElementById('transport-message-form').requestSubmit()")
         wait(mobile, "document.getElementById('transport-message').value==='' && document.getElementById('transport-messages').textContent.includes('병원 확정 전 가상 환자 상태 보고')")
+        evaluate(mobile, 'window.beforeReload = true')
+        mobile.call('Page.reload')
+        wait(mobile, "!window.beforeReload && " + ready)
+        self.assertEqual(evaluate(mobile, "new URLSearchParams(location.search).get('pid')"), pid)
+        restored = evaluate(mobile, "document.getElementById('transport-messages').innerText")
+        self.assertIn('병원 확정 전 가상 환자 상태 보고', restored)
+        self.assertNotIn('시스템과 구급대의 현장 접수를 시작했습니다', restored)
         self.call('GET', f'/api/hospitals/H01/patients/{pid}/conversation', status=403)
         self.assertIsNone(evaluate(mobile, "document.querySelector('[data-transport-inquire]')"))
-        evaluate(mobile, """(async () => {
-          const button = id => document.getElementById('transport-' + id);
-          button('patient-info').click();
-          const closed = new Promise(resolve => button('review-panel').addEventListener('close', resolve, {once: true}));
-          button('review-close').click();
-          button('start-search').click();
-          await closed;
-          if (!button('review-panel').open) throw Error('Review did not reopen');
-          button('review-submit').click();
-        })()""")
+        evaluate(mobile, "document.getElementById('transport-patient-info').click()")
+        wait(mobile, "document.getElementById('transport-review-panel').open")
+        evaluate(mobile, """
+          document.getElementById('transport-review-panel').addEventListener('close',
+            () => { window.receivedReviewClose = true; }, {once: true});
+          document.getElementById('transport-review-close').click();
+          document.getElementById('transport-start-search').click();
+        """)
+        wait(mobile, "window.receivedReviewClose && document.getElementById('transport-review-panel').open")
+        evaluate(mobile, "document.getElementById('transport-review-close').click()")
+        wait(mobile, "!document.getElementById('transport-review-panel').open")
+        reports = (
+            ('20세 남성, 흉통 있음, 의식 명료, 호흡 정상', ['나이: 20세', '성별: 남성', '증상: 흉통', '의식: 명료', '호흡: 정상']),
+            ('혈압 120에 80, 맥박 92회, 산소포화도 97퍼센트, 체온 37.2도', ['혈압: 120/80 mmHg', '맥박: 92회/분', '산소포화도: 97%', '체온: 37.2°C']),
+            ('호흡수 분당 20회, 혈당 105 밀리그램 퍼 데시리터, 20분 전 발생', ['호흡수: 20회/분', '혈당: 105 mg/dL', '발생 시각:']),
+        )
+        for report, receipt_lines in reports:
+            evaluate(mobile, "document.getElementById('transport-message').value=" + json.dumps(report) + ";"
+                     "document.getElementById('transport-message').dispatchEvent(new Event('input'));"
+                     "document.getElementById('transport-message-form').requestSubmit()")
+            wait(mobile, "Array.from(document.querySelectorAll('#transport-messages .transport-bubble')).some("
+                 "node => " + json.dumps(receipt_lines) + ".every(line => node.innerText.includes(line)))")
+        path = '/api/patients/' + pid
+        self.assertEqual(self.call('GET', path + '/intake-draft')['draft']['followup']['items'], [])
+        self.assertIsNone(self.call('GET', path)['age'])
+        evaluate(mobile, "document.getElementById('transport-start-search').click()")
+        wait(mobile, "document.getElementById('transport-command-panel').open")
+        evaluate(mobile, "document.getElementById('transport-command-confirm').click()")
         wait(mobile, "document.querySelector('[data-transport-inquire=H01]') && !document.getElementById('transport-gps').hidden")
+        submitted = self.call('GET', path)
+        self.assertEqual(submitted['age'], 20)
+        self.assertEqual(submitted['extra']['vitals']['glucose'], 105)
+        staff_link = evaluate(mobile, "document.querySelector('[data-candidate-id=H01] a').href")
+        self.assertEqual(staff_link, self.api_url + '/hospital/?hid=H01&pid=' + pid)
         evaluate(mobile, "document.querySelector('[data-transport-inquire=H01]').click()")
         wait(mobile, "document.getElementById('transport-inquiries').textContent.includes('문의 중')")
-        staff.call('Page.navigate', url=self.api_url + '/hospital/?hid=H01&pid=' + pid)
+        staff.call('Page.navigate', url=staff_link)
         wait(staff, "document.querySelector('[data-act=accept]')")
         evaluate(staff, "document.getElementById('handler').value='가상 의료진';document.getElementById('handler').dispatchEvent(new Event('input'));document.querySelector('[data-act=accept]').click()")
         wait(mobile, "document.querySelector('[data-transport-confirm]')")
@@ -438,12 +503,26 @@ class LiveTeamChat(unittest.TestCase):
         evaluate(mobile, "document.querySelector('[data-transport-confirm]').click()")
         wait(mobile, "!document.getElementById('transport-send').disabled && !document.getElementById('car-route-start').disabled")
         self.assertEqual(evaluate(mobile, "document.getElementById('transport-participants').children.length"), 3)
+        self.assertIn('목적지가 확정됐습니다', evaluate(mobile, "document.getElementById('transport-messages').textContent"))
         evaluate(mobile, "document.getElementById('car-route-start').click()")
-        self.assertEqual(evaluate(mobile, "window.gpsWatchCount"), 1)
+        wait(mobile, "window.gpsWatchCount === 1")
+        confirmed = self.call('GET', path)
+        self.assertEqual(confirmed['state'], 'CONFIRMED')
+        self.call('POST', path + '/depart', {'expected_version': confirmed['version'] + 1}, status=409)
+        self.assertEqual(self.call('GET', path)['state'], 'CONFIRMED')
+        wait(mobile, "document.querySelector('#transport-depart:enabled')?.checkVisibility()")
+        evaluate(mobile, "const depart=document.getElementById('transport-depart'); depart.click(); depart.click()")
+        wait(mobile, "document.getElementById('transport-depart').hidden && document.getElementById('transport-messages').textContent.includes('출발했습니다')")
+        moving = self.call('GET', path)
+        self.assertEqual(moving['state'], 'IN_TRANSIT')
+        self.assertGreater(moving['eta_at'], moving['departed_at'])
+        self.call('POST', path + '/depart', {'expected_version': confirmed['version']}, status=409)
+        self.assertEqual(self.call('GET', path)['departed_at'], moving['departed_at'])
         evaluate(mobile, "document.getElementById('transport-toggle').click();document.getElementById('transport-message').value='가상 대원 실제 HTTP 메시지';document.getElementById('transport-message').dispatchEvent(new Event('input'));document.getElementById('transport-message-form').requestSubmit()")
         wait(mobile, "document.getElementById('transport-message').value==='' && !document.getElementById('transport-send').disabled")
         evaluate(staff, "document.querySelector('[data-tab=incoming]').click()")
-        wait(staff, "document.querySelector('[data-patient=" + pid + "]')")
+        wait(staff, "document.querySelector('[data-patient=" + pid + "]')?.innerText.includes('이송 중')")
+        self.assertIn('20세', evaluate(staff, "document.querySelector('[data-patient=" + pid + "]').innerText"))
         # Select by the team's original incoming-card action, without replacing its chat implementation.
         evaluate(staff, "document.querySelector('[data-patient=" + pid + "]').click()")
         wait(staff, "document.getElementById('chatBody') && !document.getElementById('chatSend').disabled && document.getElementById('chatLog').textContent.includes('가상 대원 실제 HTTP 메시지')")
@@ -468,6 +547,45 @@ class LiveTeamChat(unittest.TestCase):
         for width in (768, 1024):
             staff.call('Emulation.setDeviceMetricsOverride', width=width, height=900, deviceScaleFactor=1, mobile=False)
             self.assertTrue(evaluate(staff, 'document.documentElement.scrollWidth<=innerWidth'), 'Hospital tablet width ' + str(width))
+        # Exercise the fetched hospital screen through the same gateway as the crew.
+        evaluate(staff, "document.getElementById('hospitalToolToggle').click()")
+        for name in ('resources', 'restrictions', 'operations'):
+            self.assertTrue(evaluate(staff, f"document.querySelector('[data-tab={name}]').checkVisibility()"), name)
+        evaluate(staff, "document.getElementById('hospitalToolToggle').click()")
+        self.assertTrue(evaluate(staff, "document.getElementById('incomingPlanningToggle').checkVisibility()"))
+        evaluate(staff, "document.getElementById('incomingPlanningToggle').click()")
+        wait(staff, "document.getElementById('incomingPlanningToggle').ariaExpanded === 'true'")
+        evaluate(staff, "document.getElementById('incomingPlanningToggle').click()")
+
+        actions = "#incomingActions [data-patient-action="
+        adjust = f"document.querySelector('{actions}adjust]')"
+        self.assertTrue(evaluate(staff, adjust + ".checkVisibility()"))
+        evaluate(staff, adjust + ".click()")
+        self.assertIn('사유', evaluate(staff, "document.getElementById('notice').textContent"))
+        evaluate(mobile, "window.preDepartureReload = true")
+        mobile.call('Page.reload')
+        wait(mobile, "!window.preDepartureReload && " + ready)
+        self.assertTrue(evaluate(mobile, "document.getElementById('transport-depart').hidden"))
+        self.assertIn('출발했습니다', evaluate(mobile, "document.getElementById('transport-messages').innerText"))
+        self.assertFalse(self.call('GET', path)['needs_adjustment'])
+
+        evaluate(staff, "const note=document.getElementById('reviewNote');note.value='가상 병상 점검';"
+                        "note.dispatchEvent(new Event('input',{bubbles:true}));" + adjust + ".click()")
+        wait(staff, "document.getElementById('notice').textContent.includes('수용 취소 요청을 이송자에게 보냈습니다')")
+        after_request = self.call('GET', path)
+        self.assertTrue(after_request['needs_adjustment'])
+        self.assertEqual(after_request['adjustment_note'], '가상 병상 점검')
+        self.assertEqual(after_request['destination_hospital_id'], 'H01')
+
+        evaluate(staff, f"document.querySelector('{actions}arrive]').click()")
+        wait(staff, f"document.querySelector('{actions}discharge]')?.checkVisibility()")
+        self.assertEqual(self.call('GET', path)['state'], 'ARRIVED')
+        wait(mobile, "document.getElementById('transport-workspace').dataset.stage === 'closed'")
+        self.assertTrue(evaluate(mobile, "document.getElementById('transport-depart').hidden"))
+        self.assertIsNone(evaluate(staff, adjust))
+        evaluate(staff, f"document.querySelector('{actions}discharge]').click()")
+        wait(staff, "document.getElementById('notice').textContent.includes('퇴실을 확인')")
+        self.assertEqual(self.call('GET', path)['state'], 'COMPLETED')
         print('Real mobile/staff chat screenshots:', self.run_dir)
 
     def test_inquiry_accept_confirm_and_two_way_messages(self):
@@ -565,6 +683,33 @@ class TransportBrowser(unittest.TestCase):
         self.assertNotIn('exceptionDetails', result, str(result))
         report = result['result']['value']
         self.assertGreaterEqual(report['checks'], 40)
+
+        def evaluate(expression):
+            return browser.call('Runtime.evaluate', expression=expression, returnByValue=True)['result'].get('value')
+
+        evaluate("document.dispatchEvent(new CustomEvent('quick119:show-view',{detail:{view:'gps'}}))")
+        handle = "document.getElementById('transport-sheet-handle')"
+        expanded = handle + ".getAttribute('aria-expanded')"
+        evaluate(handle + ".focus()")
+        for key, code, vk, expected in [('Enter', 'Enter', 13, 'false'), (' ', 'Space', 32, 'true')]:
+            for phase in ('keyDown', 'keyUp'):
+                browser.call('Input.dispatchKeyEvent', type=phase, key=key, code=code, windowsVirtualKeyCode=vk,
+                             text=('\r' if key == 'Enter' else key) if phase == 'keyDown' else '')
+            self.assertEqual(evaluate(expanded), expected)
+
+        browser.call('Emulation.setTouchEmulationEnabled', enabled=True)
+        for distance, expected in [(45, 'false'), (-45, 'true'), (0, 'false'), (0, 'true')]:
+            evaluate(handle + ".scrollIntoView({block:'nearest'})")
+            x, y = evaluate(f"(() => {{ const r={handle}.getBoundingClientRect(); return [r.x+r.width/2, r.y+r.height/2]; }})()")
+            browser.call('Input.dispatchTouchEvent', type='touchStart', touchPoints=[{'x': x, 'y': y}])
+            if distance:
+                browser.call('Input.dispatchTouchEvent', type='touchMove', touchPoints=[{'x': x, 'y': y + distance}])
+            browser.call('Input.dispatchTouchEvent', type='touchEnd', touchPoints=[])
+            # Chromium may deliver the compatibility click after touchEnd.
+            deadline = time.monotonic() + 1
+            while evaluate(expanded) != expected and time.monotonic() < deadline:
+                time.sleep(.02)
+            self.assertEqual(evaluate(expanded), expected, f'touch distance {distance} at {x}, {y}')
         (run / 'browser-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
         print('Combined GPS/chat browser checks:', report['checks'])
 

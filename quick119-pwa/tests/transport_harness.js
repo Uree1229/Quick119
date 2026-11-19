@@ -55,7 +55,7 @@
         coordinates: [[body.origin.lon, body.origin.lat], [body.destination.lon, body.destination.lat]], cached: false});
     }
     if (url.pathname === '/api/hospitals') return reply(hospitals);
-    if (url.pathname === '/api/patients') { patient = {...body, state: 'WAITING', version: 1}; events.push({id: 'event:1', kind: 'system', sender_role: 'system', at: now / 1000, text: '가상 이송 생성', order_key: [1, 0, 1]}); return reply(body); }
+    if (url.pathname === '/api/patients') { patient = {...body, state: 'WAITING', version: 1}; events.push({id: 'event:1', kind: 'system', type: 'patient_created', sender_role: 'system', at: now / 1000, text: '가상 이송 생성', order_key: [1, 0, 1]}); return reply(body); }
     if (patient && url.pathname === '/api/patients/' + patient.id) {
       if (options.method === 'PATCH') patient = {...patient, ...body, version: patient.version + 1};
       return reply(patient);
@@ -107,6 +107,34 @@
   check(posts.length === 1 && posts[0].hospital_session_id === null && $('message').value === '', 'Private report is sent to the same room before any inquiry');
   $('start-search').click(); $('review-submit').click(); await settle();
   check(!$('gps').hidden && document.querySelectorAll('[data-transport-inquire]').length === hospitals.length, 'Review opens map with ranked candidates');
+  const handle = $('sheet-handle'), sheet = $('sheet');
+  const sheetOpen = () => !sheet.hidden && handle.getAttribute('aria-expanded') === 'true';
+  const listMapHeight = nav('map').clientHeight;
+  check(handle instanceof HTMLButtonElement && handle.getAttribute('aria-controls') === sheet.id && sheetOpen(), 'Map opens with an accessible list control');
+  sheet.scrollTop = sheet.scrollHeight;
+  check(handle.getBoundingClientRect().bottom <= sheet.getBoundingClientRect().top + 1, 'Scrolling details leaves the handle above the scroll area');
+  handle.click();
+  check(sheet.hidden && handle.getAttribute('aria-expanded') === 'false' && handle.offsetHeight >= 44 && nav('map').clientHeight > listMapHeight, 'Collapsing the list enlarges the map and keeps its return control');
+  handle.click();
+  check(sheetOpen(), 'Native click activation reopens the list');
+  // Synthetic pointer events do not register an active browser pointer for capture.
+  handle.setPointerCapture = () => {};
+  const swipe = (dy, end = 'pointerup') => {
+    const pointer = (type, clientY) => handle.dispatchEvent(new PointerEvent(type, {pointerId: 7, isPrimary: true, clientY}));
+    pointer('pointerdown', 80); pointer(end, 80 + dy);
+    if (end === 'pointerup') handle.dispatchEvent(new MouseEvent('click', {detail: 1}));
+  };
+  swipe(48, 'pointercancel');
+  check(sheetOpen(), 'Cancelled swipe leaves the list open');
+  swipe(48);
+  check(sheet.hidden, 'Downward swipe survives its compatibility click');
+  swipe(-48);
+  check(sheetOpen(), 'Upward swipe survives its compatibility click');
+  delete handle.setPointerCapture;
+  handle.click();
+  const callsBeforePin = routeCalls.length;
+  document.querySelector('.tw-pin').click();
+  check(sheetOpen() && $('cand-H01').dataset.focus === 'true' && routeCalls.length === callsBeforePin && !inquiries.length, 'A candidate pin reveals its card without routing or inquiring');
   tileError();
   check(nav('map-status').textContent === '배경지도 일부를 불러오지 못했습니다.', 'Tile failure does not mislabel candidate or route data');
   document.querySelector('[data-transport-inquire]').click(); await settle();
@@ -114,7 +142,9 @@
   accepted = true; inquiries[0].state = 'ACCEPTED'; inquiries[0].usable = true; await tick();
   check(!$('send').disabled && $('participants').children.length === 2 && !!document.querySelector('[data-transport-confirm]'), 'Staff acceptance alone does not add hospital');
   $('message').value = '시스템에 작성 중인 미전송 초안'; $('message').dispatchEvent(new Event('input'));
+  handle.click();
   document.querySelector('[data-transport-confirm]').click(); await settle();
+  check(sheetOpen() && sheet.scrollTop === 0, 'Selecting the confirmed route reopens details at the top');
   check(session === 1 && $('participants').children.length === 3, 'Confirmation adds hospital to the existing system/crew room');
   check($('send').disabled && !$('review-draft').hidden, 'Private draft requires review before sharing with newly joined hospital');
   $('message').value = ''; $('message').dispatchEvent(new Event('input'));
@@ -164,11 +194,8 @@
   $('toggle').click(); await settle();
   check(nav('follow').getAttribute('aria-pressed') === 'false' && map.getCenter().distanceTo(center) < 1, 'Manual view center and follow-off survive switches');
   $('toggle').click(); await settle();
-  $('chat-stop').click(); await settle();
   const count = routeCalls.length; await fix(.0011, 11000);
-  check(cleared.length === 0 && routeCalls.length > count, 'Chat disconnect does not stop GPS updates');
-  check(![...timers.values()].some(t => t.ms === 3000), 'Explicit chat disconnect removes polling timer');
-  $('chat-resume').click(); await settle();
+  check(cleared.length === 0 && routeCalls.length > count, 'GPS updates continue in chat view');
   nav('stop').click(); const pollBefore = [...timers.values()].filter(t => t.ms === 3000).length;
   staffMessage('GPS 종료 뒤 답장'); await tick();
   check(cleared.length === 1 && pollBefore === 1 && $('messages').textContent.includes('GPS 종료 뒤 답장'), 'GPS stop leaves chat receiving');

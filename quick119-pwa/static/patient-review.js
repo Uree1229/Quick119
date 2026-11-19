@@ -57,7 +57,7 @@
       $('review-note').textContent = editing
         ? '아래 값을 원문과 대조해 확인하세요. 마지막 버튼을 누르면 환자 정보를 저장한 뒤 후보 병원을 조회합니다.'
         : state.locked ? '이미 수용 문의를 보낸 접수입니다. 저장 정보와 보고를 조회하며, 여기서 다시 수정하거나 탐색하지 않습니다.'
-        : '저장된 정보와 이미 전송한 보고만 표시합니다. 작성 중인 메시지는 포함하지 않습니다.';
+        : '';
       $('review-error').textContent = '';
       $('review-submit').hidden = !editing;
       const saved = $('saved-patient'); saved.replaceChildren();

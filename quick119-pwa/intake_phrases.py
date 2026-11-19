@@ -1,7 +1,8 @@
 """Bounded spoken forms for the crew's intake conversation."""
+import json
 import re
 
-from server import service, voice_input, voice_terms
+from server import db, service, voice_followup, voice_input, voice_terms
 
 _REQUEST = r'(?:해)?(?:줘|주세요|주십시오|줄래요?|주시겠어요|줄수있어)?'
 _DIRECT = r'(?:줘|주세요|주십시오|줄래요?|주시겠어요|줄수있어)?'
@@ -63,7 +64,34 @@ def correction(text):
     return None
 
 
-def apply_correction(ctx, row, body, text, parsed):
+_AGE_OR_SEX = re.compile(r'남자|여자|남성|여성|성별|나이|\d+\s*(?:세|살)|[한두세네다섯여섯일곱여덟아홉열스물서른마흔쉰]+\s*살')
+_DEMOGRAPHIC_DENIAL = re.compile(
+    r'(?:남자|여자|남성|여성)(?:\s*(?:아이|어린이|환자))?'
+    r'(?:이|가|은|는|인\s*것이)?\s*(?:아니|아닙|아님|아닌|아닐|인지(?:는|도)?\s*(?:모|불|미확인))'
+    r'|(?:세|살)(?:이|가|은|는)?\s*(?:아니|아닙|아님|아닌|아닐)')
+
+
+def ambiguous_demographics(text):
+    # A caregiver's own age or sex and an explicitly negated demographic
+    # cannot be credited as observations of the patient.
+    if _DEMOGRAPHIC_DENIAL.search(text):
+        return True
+    caregiver = False
+    for segment in re.split(r'[,，.;!?\n]', text):
+        if '환자' in segment or '본인' in segment:
+            caregiver = False
+        if '보호자' in segment:
+            caregiver = True
+        if caregiver and _AGE_OR_SEX.search(segment):
+            return True
+    return False
+
+
+def bare_edit(text):
+    return bool(re.fullmatch(r'(?:이거|이것|내용|정보)?\s*(?:수정|정정)(?:\s*해\s*(?:줘|주세요)?)?[.!]?', text.strip()))
+
+
+def record_utterance(ctx, row, body, text, mode):
     conn, now = ctx.conn, ctx.now
     sid, uid = row['id'], body['utterance_id']
     service._require(not conn.execute(
@@ -72,7 +100,67 @@ def apply_correction(ctx, row, body, text, parsed):
     service._require(conn.execute(
         'SELECT count(*) FROM voice_utterances WHERE session_id=?', (sid,)).fetchone()[0] < 100,
         'VOICE_SESSION_FULL', '세션당 발화 100개를 초과했습니다.', 409)
-    conn.execute('INSERT INTO voice_utterances VALUES(?,?,?,?,?,?,?)', (sid, uid, text, 'command', 'app_transcript', now, now))
+    conn.execute('INSERT INTO voice_utterances VALUES(?,?,?,?,?,?,?)', (sid, uid, text, mode, 'app_transcript', now, now))
+
+
+def clarification(ctx, row, mode, prompt, action=None):
+    return dict(session=voice_input._public(ctx.conn, row), operational_effect='voice_command_needs_clarification',
+                effective_mode=mode, speak_text=prompt, command={'action': action} if action else None)
+
+
+def unavailable_field(text):
+    # Full statements only. A request to read a saved value stays a command.
+    compact = re.sub(r'\s+', '', text)
+    match = re.fullmatch(r'(?:환자의?)?(.+?)[:：]?(미확인|미측정|확인불가)(?:입니다|이에요|예요)?[.!]?', compact)
+    if match:
+        names = {name.replace(' ', ''): key for key, name in voice_input._ANSWER_LABELS.items()}
+        names.update(심박수='pulse', 발생시간='onset_at', 의식상태='consciousness', 호흡상태='breathing')
+        # 나이 ends in 이, so resolve the whole name before stripping a subject particle.
+        key = names.get(match[1]) or names.get(re.sub(r'[은는이가]$', '', match[1]))
+        if key:
+            return key, voice_input._ANSWER_LABELS[key], '확인 불가' if match[2] == '확인불가' else match[2]
+    return None
+
+
+def handle_input(ctx, row, body, text):
+    variants = [text, *body.get('recognition_alternatives', [])]
+    action = None
+    mode = 'command'
+    unavailable = [unavailable_field(phrase) for phrase in variants]
+    if any(unavailable):
+        mode = 'dictation'
+        if all(item == unavailable[0] for item in unavailable):
+            question, label, status = unavailable[0]
+            prompt = f'이번 보고 · {label}: {status}'
+            fields = json.loads(row['fields'])
+            if any(key in fields for key in voice_followup.lookup(question)['fields']):
+                prompt += ' · 이전 기록 유지'
+        else:
+            prompt = '인식 후보가 서로 다릅니다. 해당 항목을 다시 알려 주세요.'
+    elif any(ambiguous_demographics(phrase) for phrase in variants):
+        mode = 'dictation'
+        prompt = '환자 본인에게 확인한 내용만 따로 알려 주세요.'
+    elif bare_edit(text):
+        action, prompt = 'edit', '수정할 항목과 새 값을 알려 주세요.'
+    else:
+        try:
+            # The runtime saves the utterance before resolving commands. Undo
+            # that tentative write before recording a recoverable prompt once.
+            with db.transaction(ctx.conn):
+                return voice_input._utterance(ctx.conn, ctx.now, row, body, text, 'app_transcript')
+        except service.ServiceError as error:
+            if error.code not in ('VOICE_NOTHING_TO_UNDO', 'VOICE_COMMAND_UNRESOLVED'):
+                raise
+            action = voice_terms.parse_command(text)['action']
+            prompt = {'undo': '취소할 입력이 없습니다.', 'edit': '수정할 항목과 새 값을 알려 주세요.',
+                      'add': '추가할 항목과 값을 알려 주세요.', 'remove': '삭제할 항목을 알려 주세요.'}.get(action, error.message)
+    record_utterance(ctx, row, body, text, mode)
+    return clarification(ctx, row, mode, prompt, action)
+
+
+def apply_correction(ctx, row, body, text, parsed):
+    conn, now = ctx.conn, ctx.now
+    record_utterance(ctx, row, body, text, 'command')
     replacement, fields = parsed
     if replacement:
         extracted = voice_input._extract(replacement, now, row)
@@ -82,7 +170,6 @@ def apply_correction(ctx, row, body, text, parsed):
                 for variant in variants):
             result = voice_input._edit(conn, now, row, extracted['fields'], [], 'correction',
                                        'voice_command', {key: [text] for key in fields}, extracted['warnings'])
-            return dict(result, command={'action': 'edit'}, effective_mode='command',
+            return dict(result, command={'action': 'edit'}, effective_mode='command', extraction=extracted,
                         speak_text=voice_terms.readback(extracted['fields']))
-    return dict(session=voice_input._public(conn, row), operational_effect='voice_command_needs_clarification',
-                effective_mode='command', speak_text='어느 값으로 고칠지 확인해 주세요. 항목과 새 값을 한 번 더 말해 주세요.')
+    return clarification(ctx, row, 'command', '어느 값으로 고칠지 확인해 주세요. 항목과 새 값을 한 번 더 말해 주세요.')

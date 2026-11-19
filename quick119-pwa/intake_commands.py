@@ -5,6 +5,7 @@ from functools import lru_cache
 from uuid import uuid4
 
 import intake_phrases
+from intake_replies import reply_text
 
 from server import app, conversations, db, service, voice_followup, voice_input, voice_lexicon, voice_recognition_context, voice_terms
 from speech_eval.asr_correction import Corrector, numeric_flags
@@ -71,6 +72,18 @@ def check_version(data, session):
     require('revision' in data and data['revision'] == current, 'INTAKE_STALE', '다른 입력이 반영됐습니다. 최신 초안을 확인하세요.', 409)
 
 
+def record_reply(ctx, pid, text, *, command_text=None):
+    # Only a private pre-inquiry draft can reach this point. Reuse the conversation
+    # event cursor and the enclosing request's transaction and idempotency key.
+    kind = 'crew_intake_reply'
+    data = {'reply': text}
+    if command_text is not None:
+        data['command_text'] = command_text
+    event_id = service.log(ctx.conn, ctx.now, ACTOR, kind, pid, **data)
+    return conversations._event_item(dict(id=event_id, at=ctx.now, type=kind,
+                                          hospital_id=None, data=data), None)
+
+
 def input_report(ctx, pid):
     data = ctx.body
     text = data.get('text')
@@ -114,13 +127,15 @@ def input_report(ctx, pid):
                         action = voice_terms.parse_command(text)['action']
                         if action in ('submit', 'confirm') and all(voice_terms.parse_command(alt)['action'] == action for alt in alternatives):
                             del transcript['recognition_alternatives']
-                    result = voice_input._utterance(ctx.conn, ctx.now, row, transcript, text, 'app_transcript')
+                    result = intake_phrases.handle_input(ctx, row, transcript, text)
                 else:
                     result = intake_phrases.apply_correction(ctx, row, transcript, text, correction)
         draft = result['session']
         command = (result.get('command') or {}).get('action')
         message = None
-        if result.get('effective_mode') == 'dictation' or command in {'observe', 'edit', 'add', 'remove', 'undo'} or data.get('question_id'):
+        applied_command = (command in {'observe', 'edit', 'add', 'remove', 'undo'}
+                           and result.get('operational_effect') != 'voice_command_needs_clarification')
+        if result.get('effective_mode') == 'dictation' or applied_command or data.get('question_id'):
             message = conversations.send_message(ctx.conn, ctx.now, pid, {
                 'body': text, 'client_message_id': key, 'hospital_session_id': None, 'sender_name': '가상 응급대원'})['message']
         feedback = result.get('speak_text') or draft['speak_text']
@@ -136,7 +151,10 @@ def input_report(ctx, pid):
         # Phone keyboard dictation arrives through the normal text input too.
         hints.extend(f"인식 원문 ‘{x['original']}’ · 교정 후보 ‘{x['replacement']}’" for x in corrector().suggest(text))
         hints.extend(f"수치 원문 ‘{x['original']}’ 확인 필요" for x in numeric_flags(text))
-        return dict(message=message, action=command, effect=result.get('operational_effect'), feedback=feedback,
+        reply = reply_text(result, session['fields'], question_id=data.get('question_id'))
+        system_item = record_reply(ctx, pid, reply, command_text=text if message is None else None)
+        return dict(message=message, system_items=[system_item], action=command,
+                    effect=result.get('operational_effect'), feedback=feedback,
                     hints=hints, input_id=key, revision=[draft['id'], draft['version']])
     return write(ctx, pid, 'input', apply)
 
@@ -157,7 +175,9 @@ def confirm(ctx, pid):
             voice_input.confirm(ctx.conn, ctx.now, session['id'], dict(common, confirmed=True, client_request_id=str(uuid4())))
             if data['intent'] == 'search':
                 voice_input.submit(ctx.conn, ctx.now, session['id'], dict(common, start_inquiry=False, client_request_id=str(uuid4())))
-        return {'intent': data['intent']}
+        reply = ('확인한 환자 정보를 반영했습니다.' if data['intent'] == 'search'
+                 else '현재 버전의 환자 정보를 확정했습니다.')
+        return {'intent': data['intent'], 'system_items': [record_reply(ctx, pid, reply)]}
     return write(ctx, pid, 'confirm', apply)
 
 

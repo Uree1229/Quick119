@@ -79,6 +79,30 @@ class IntakeChatIntegration(unittest.TestCase):
         self.call('POST', f'/api/inquiries/{iid}/respond', {'action': 'accept', 'handled_by': '가상 의료진'})
         return iid
 
+    def test_intake_replies_retry_replay_and_hospital_visibility(self):
+        pid = self.create_case()
+        path = f'/api/patients/{pid}'
+        payload = dict(request_id=uuid4().hex, revision=None, text='10살 남자아이', source='text')
+        sent = self.call('POST', path + '/intake-draft', payload)
+        reply, = sent['system_items']
+        self.assertEqual(reply['data'], {'reply': '나이: 10세\n성별: 남성'})
+        self.assertEqual(self.call('POST', path + '/intake-draft', payload)['system_items'], [reply])
+        send_intent = self.call('POST', path + '/intake-draft',
+                                dict(payload, revision=sent['revision'], request_id=uuid4().hex, text='전송'))
+        command_reply, = send_intent['system_items']
+        self.assertEqual(command_reply['data']['command_text'], '전송')
+        self.assertIsNone(send_intent['message'])
+        self.assertEqual(self.call('GET', path)['inquiries'], [])
+        history = self.call('GET', path + '/conversation')['items']
+        self.assertEqual([i for i in history if i.get('type') == 'crew_intake_reply'], [reply, command_reply])
+        self.assertLess(history.index(sent['message']), history.index(reply))
+
+        iid = self.accept(pid)
+        self.call('POST', path + '/confirm', {'inquiry_id': iid})
+        staff = self.call('GET', f'/api/hospitals/H01/patients/{pid}/conversation')['items']
+        self.assertIn(sent['message'], staff)
+        self.assertFalse(any(i.get('type') == 'crew_intake_reply' for i in staff))
+
     def test_reports_before_inquiry_and_acceptance_join_same_conversation_after_confirm(self):
         pid = self.create_case()
         path = f'/api/patients/{pid}'

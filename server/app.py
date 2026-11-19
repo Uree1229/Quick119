@@ -12,6 +12,7 @@ import traceback
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 from . import db, service, synthetic, conversations, inquiry_workflow, inquiry_policies, transport_review, transport_reassignment
 from .travel import TravelEstimator
@@ -599,7 +600,21 @@ def _(ctx, pid, act):
     if act == 'confirm':
         return service.confirm_destination(ctx.conn, ctx.now, pid, b.get('inquiry_id'))
     if act == 'depart':
-        return service.depart(ctx.conn, ctx.now, pid, ctx.estimator, b.get('lat'), b.get('lon'))
+        estimator = ctx.estimator
+        if 'expected_version' in b:
+            expected = b['expected_version']
+            service._require(type(expected) is int and expected > 0, 'INVALID', '환자 버전이 올바르지 않습니다')
+
+            def estimate_for_reviewed_patient(origin, destination):
+                # depart() has read its snapshot and rechecks it on commit. Validate the UI's
+                # snapshot between those steps without holding a write lock during a route lookup.
+                patient = service._patient(ctx.conn, pid)
+                service._require(patient['version'] == expected, 'CONFLICT',
+                                 '환자 상태가 바뀌었습니다. 목적지를 다시 확인하세요', 409)
+                return ctx.estimator.estimate(origin, destination)
+
+            estimator = SimpleNamespace(estimate=estimate_for_reviewed_patient)
+        return service.depart(ctx.conn, ctx.now, pid, estimator, b.get('lat'), b.get('lon'))
     if act == 'change-destination':
         return service.change_destination(ctx.conn, ctx.now, pid, b.get('inquiry_id'), ctx.estimator,
                                           b.get('lat'), b.get('lon'))

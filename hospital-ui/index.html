@@ -347,9 +347,11 @@ function acceptAvailability(patient) {
 }
 function renderHospitalContext() {
   const h = hospitalData;
-  const source = h?.source === 'public' ? '실제 병원 · 공공 API 정보' : h?.source === 'synthetic' ? '가상 병원 데이터' : '병원 정보 조회 중';
+  const source = h?.source_ids?.identity_source === 'seoul_public' ? '서울 병원 공공정보 · 병상·수용·대화 시연' : h?.source === 'public' ? '실제 병원 · 공공 API 정보' : h?.source === 'synthetic' ? '가상 병원 데이터' : '병원 정보 조회 중';
   $('hospitalContext').textContent = `${h?.name || hid} · ${source}`;
-  $('serverContext').textContent = `연결 서버: ${serverBase} · 병원 ID: ${hid}`;
+  $('serverContext').textContent = h?.source_ids?.identity_source === 'seoul_public'
+    ? [h.address, h.source_ids.nmc, h.source_ids.snapshot_date].filter(Boolean).join(' · ')
+    : `연결 서버: ${serverBase} · 병원 ID: ${hid}`;
   let local = false;
   try { local = ['127.0.0.1','localhost','[::1]'].includes(new URL(serverBase).hostname); } catch {}
   $('localDemoNote').hidden = !local;
@@ -377,7 +379,7 @@ async function loadHospitals() {
     const list = await api('/api/hospitals');
     if(version !== contextVersion)return;
     $('hospital').innerHTML = list.map((h) =>
-      `<option value="${esc(h.id)}">${esc(h.name)} · ${esc(h.id)}${h.source === 'public' ? ' · 실제 병원' : h.source === 'synthetic' ? ' · 가상 병원' : ''}</option>`).join('');
+      `<option value="${esc(h.id)}">${esc(h.name)} · ${esc(h.id)}${h.source_ids?.identity_source === 'seoul_public' ? ' · 서울 병원 · 시연' : h.source === 'public' ? ' · 실제 병원' : h.source === 'synthetic' ? ' · 가상 병원' : ''}</option>`).join('');
     if (!list.some((h) => h.id === hid) && list.length) hid = list[0].id;
     $('hospital').value = hid;
     renderHospitalContext();

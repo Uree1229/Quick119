@@ -48,7 +48,38 @@
   const validPoint = p => Number.isFinite(p.lat) && Number.isFinite(p.lon) &&
     Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180;
 
+  let boundaryTask = null, seoulRing = null;
+  function loadBoundary() {
+    if (!boundaryTask) {
+      boundaryTask = fetch('/static/seoul-demo-boundary.json', {credentials: 'same-origin'})
+        .then(async response => {
+          if (!response.ok) throw new Error();
+          const {ring} = await response.json();
+          if (!Array.isArray(ring) || ring.length < 4 || !ring.every(c => Array.isArray(c) &&
+              c.length === 2 && c.every(Number.isFinite))) throw new Error();
+          seoulRing = ring;
+        }).catch(() => {
+          boundaryTask = null;
+          throw new Error('서울시 경계를 불러오지 못했습니다. 표시된 경로를 유지합니다. 잠시 후 다시 시도해 주세요.');
+        });
+    }
+    return boundaryTask;
+  }
+  function inDemoArea({lat, lon}) {
+    // Ray crossing on the bundled Seoul administrative boundary, in longitude/latitude order.
+    let inside = false;
+    for (let i = 0, j = seoulRing.length - 1; i < seoulRing.length; j = i++) {
+      const [ax, ay] = seoulRing[i], [bx, by] = seoulRing[j];
+      if (Math.abs((bx-ax)*(lat-ay) - (by-ay)*(lon-ax)) < 1e-12 &&
+          lon >= Math.min(ax,bx) && lon <= Math.max(ax,bx) && lat >= Math.min(ay,by) && lat <= Math.max(ay,by)) return true;
+      if ((ay > lat) !== (by > lat) && lon < (bx - ax) * (lat - ay) / (by - ay) + ax) inside = !inside;
+    }
+    return inside;
+  }
+  const demoAreaLabel = '서울시 행정구역';
+  const originLabel = p => selected?.demoOrigin && !Number.isFinite(p.accuracy) ? '서울 시연 출발지' : '현재 GPS';
   function updateControls() {
+    byId('car-route-external').hidden = !!selected?.demoOrigin;
     byId('car-route-start').disabled = tracking || busy || result.hidden;
     byId('car-route-stop').disabled = !tracking;
     byId('car-route-refresh').disabled = busy || tracking;
@@ -111,11 +142,18 @@
 
   function moveMarker(origin) {
     if (mapVisible()) {
-      if (currentMarker) currentMarker.setLatLng([origin.lat, origin.lon]);
+      if (currentMarker) {
+        currentMarker.setLatLng([origin.lat, origin.lon]);
+        currentMarker.setTooltipContent?.(originLabel(origin));
+      }
       if (map && following) map.panTo([origin.lat, origin.lon], {animate: false});
     }
     const accuracy = Number.isFinite(origin.accuracy) ? ` · GPS 정확도 약 ${Math.round(origin.accuracy)}m` : '';
-    byId('car-route-origin').textContent = `${tracking ? '현재 위치' : '출발'} ${origin.lat.toFixed(5)}, ${origin.lon.toFixed(5)}${accuracy}`;
+    byId('car-route-origin').textContent = `${selected.demoOrigin ? originLabel(origin) : tracking ? '현재 위치' : '출발'} ${origin.lat.toFixed(5)}, ${origin.lon.toFixed(5)}${accuracy}`;
+    if (selected.demoOrigin) {
+      byId('car-route-external').removeAttribute('href');
+      return;
+    }
     const query = new URLSearchParams({sp: `${origin.lat},${origin.lon}`, ep: `${selected.lat},${selected.lon}`, by: 'CAR'});
     byId('car-route-external').href = `https://map.kakao.com/?${query}`;
   }
@@ -186,7 +224,7 @@
       if (latLngs.length >= 2) L.polyline(latLngs, {color: '#2265b2', weight: 6, opacity: 0.9}).addTo(routeLayer);
       else mapStatus.textContent = '도로 경로 좌표가 없어 출발지와 목적지만 표시합니다. 카카오맵에서 경로를 확인해 주세요.';
       currentMarker = L.circleMarker([origin.lat, origin.lon], {radius: 8, color: '#fff', weight: 3, fillColor: '#2265b2', fillOpacity: 1})
-        .bindTooltip('현재 GPS 위치').addTo(routeLayer);
+        .bindTooltip(originLabel(origin)).addTo(routeLayer);
       L.circleMarker([destination.lat, destination.lon], {radius: 8, color: '#fff', weight: 3, fillColor: '#dc3545', fillOpacity: 1})
         .bindTooltip(document.createTextNode(destination.name)).addTo(routeLayer);
       map.invalidateSize();
@@ -195,6 +233,24 @@
     } catch (_) {
       mapStatus.textContent = '지도 표시를 완료하지 못했습니다. 카카오맵에서 경로를 확인해 주세요.';
     }
+  }
+
+  async function routeData(origin, destination, signal) {
+    if (destination.demoOrigin) {
+      // Match server.travel.synthetic_estimate, including whole-minute rounding.
+      const meters = distance(origin, destination) * 1.3;
+      const minutes = Math.max(1, Math.ceil(meters / 1000 / 40 * 60));
+      return {code: 'ok', provider: 'synthetic', distance_m: Math.round(meters), duration_sec: minutes * 60,
+        coordinates: [[origin.lon, origin.lat], [destination.lon, destination.lat]]};
+    }
+    const response = await fetch('/api/routes/car', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, cache: 'no-store', signal,
+      body: JSON.stringify({origin: {lat: origin.lat, lon: origin.lon},
+        destination: {lat: destination.lat, lon: destination.lon}}),
+    });
+    const data = await response.json();
+    if (!response.ok || data.code !== 'ok') throw new Error(errorMessages[data.code] || '자동차 경로 조회에 실패했습니다. 잠시 후 다시 시도해 주세요.');
+    return data;
   }
 
   async function requestRoute(origin, replaceRoute, token) {
@@ -206,15 +262,8 @@
     updateControls();
     const timeout = setTimeout(() => controller.abort(), 20000);
     try {
-      const response = await fetch('/api/routes/car', {
-        method: 'POST', headers: {'Content-Type': 'application/json'}, cache: 'no-store',
-        signal: controller.signal,
-        body: JSON.stringify({origin: {lat: origin.lat, lon: origin.lon},
-          destination: {lat: destination.lat, lon: destination.lon}}),
-      });
-      const data = await response.json();
+      const data = await routeData(origin, destination, controller.signal);
       if (token !== generation) return;
-      if (!response.ok || data.code !== 'ok') throw new Error(errorMessages[data.code] || '자동차 경로 조회에 실패했습니다. 잠시 후 다시 시도해 주세요.');
       if (![data.distance_m, data.duration_sec].every(value => Number.isFinite(value) && value >= 0)) {
         throw new Error('길찾기 응답 형식을 확인할 수 없습니다. 다시 시도해 주세요.');
       }
@@ -228,7 +277,7 @@
         provider.hidden = data.provider !== 'synthetic';
         provider.textContent = data.provider === 'synthetic' ? '가상 직선·시간 추정 테스트입니다. 실제 도로 경로나 길안내로 사용하지 마세요.' : '';
       }
-      byId('car-route-destination').textContent = `현재 GPS → ${destination.name}`;
+      byId('car-route-destination').textContent = `${originLabel(origin)} → ${destination.name}`;
       byId('car-route-distance').textContent = `${(data.distance_m / 1000).toFixed(1)} km`;
       const minutes = Math.ceil(data.duration_sec / 60);
       byId('car-route-duration').textContent = minutes >= 60 ? `${Math.floor(minutes / 60)}시간 ${minutes % 60}분` : `약 ${minutes}분`;
@@ -274,18 +323,55 @@
     busy = true;
     result.hidden = true;
     updateControls();
-    status.textContent = '현재 GPS 위치를 확인하고 있습니다…';
+    status.textContent = destination.demoOrigin ? '서울 시연 경로를 표시합니다.' : '현재 GPS 위치를 확인하고 있습니다…';
     panel.scrollIntoView({behavior: 'smooth', block: 'start'});
     byId('car-route-heading').focus({preventScroll: true});
     try {
-      const position = await getGPS();
+      const origin = destination.demoOrigin || point(await getGPS());
       if (token !== generation) return;
-      latest = point(position);
+      latest = origin;
+      if (destination.demoOrigin) gpsStatus(`고정 출발지 사용 · ${demoAreaLabel}에서 GPS를 켤 수 있습니다.`);
       if (!validPoint(latest)) throw new Error('유효한 GPS 좌표를 받지 못했습니다. 다시 시도해 주세요.');
       status.textContent = `${destination.name}까지 자동차 경로를 계산하고 있습니다…`;
       await requestRoute(latest, true, token);
     } catch (error) {
       if (token === generation) status.textContent = error.message;
+    } finally {
+      if (token === generation) { busy = false; updateControls(); }
+    }
+  }
+
+  function validDemoFix(p) {
+    if (!validPoint(p) || !Number.isFinite(p.accuracy) || p.accuracy > NAV.MAX_ACCURACY_M || p.accuracy < 0 ||
+        !Number.isFinite(p.timestamp) || p.timestamp > Date.now() + 1000 || Date.now() - p.timestamp > NAV.MAX_FIX_AGE_MS) {
+      gpsStatus('최근의 정확한 위치를 받지 못했습니다. 표시된 경로를 유지합니다.');
+      return false;
+    }
+    if (!inDemoArea(p)) {
+      gpsStatus(`${demoAreaLabel} 밖입니다. 표시된 경로를 유지합니다.`);
+      return false;
+    }
+    return true;
+  }
+
+  async function refreshRoute() {
+    if (!selected || tracking || busy) return;
+    if (!selected.demoOrigin) return showRoute(selected);
+    // Refresh only on explicit request; a failed or out-of-area fix leaves the displayed route intact.
+    const token = generation;
+    busy = true;
+    updateControls();
+    try {
+      if (!window.isSecureContext) throw new Error('현재 GPS를 사용하려면 신뢰되는 HTTPS로 접속해 주세요.');
+      await loadBoundary();
+      if (token !== generation) return;
+      const p = point(await getGPS());
+      if (token !== generation || !validDemoFix(p)) return;
+      latest = p;
+      gpsStatus('서울 시연 구역 내 현재 위치로 갱신했습니다.');
+      await requestRoute(p, true, token);
+    } catch (error) {
+      if (token === generation) gpsStatus(error.message);
     } finally {
       if (token === generation) { busy = false; updateControls(); }
     }
@@ -300,12 +386,19 @@
       gpsStatus('정확도 부족 또는 오래된 위치 · 경로 갱신 대기');
       return;
     }
+    if (selected.demoOrigin && !inDemoArea(p)) {
+      resetConfirmations();
+      gpsStatus(`${demoAreaLabel} 밖입니다. 표시된 경로를 유지합니다.`);
+      return;
+    }
+    const firstDemoFix = selected.demoOrigin && !lastFix;
     if (lastFix && p.timestamp <= lastFix.timestamp) return;
     if (lastFix && distance(p, lastFix) > NAV.MAX_SPEED_MPS * (p.timestamp - lastFix.timestamp) / 1000 + p.accuracy + lastFix.accuracy) {
       resetConfirmations();
       gpsStatus('일시적인 위치 튐 감지 · 다음 위치 수신 대기');
       return;
     }
+    if (firstDemoFix) { lastAttempt = null; lastSuccess = null; }
     lastFix = p;
     latest = p;
     lastReceivedAt = now;
@@ -334,15 +427,24 @@
     const reroute = offCount >= NAV.OFF_ROUTE_FIXES;
     if (reroute || moved >= NAV.MOVE_M || (moved >= meaningfulMove && (lastAttempt === null || now - lastAttempt >= NAV.REFRESH_MS))) {
       status.textContent = reroute ? '경로 이탈 확인 · 경로를 재탐색하고 있습니다…' : '현재 위치 기준 남은 거리·시간을 갱신하고 있습니다…';
-      void requestRoute(p, reroute || routeCoordinates.length < 2, token);
+      void requestRoute(p, firstDemoFix || reroute || routeCoordinates.length < 2, token);
     }
   }
 
-  function startNavigation() {
+  async function startNavigation() {
     if (tracking || busy || !selected || result.hidden) return;
     if (!window.isSecureContext || !navigator.geolocation?.watchPosition) {
       gpsStatus('신뢰되는 HTTPS와 GPS를 지원하는 브라우저에서 실행해 주세요.');
       return;
+    }
+    if (selected.demoOrigin) {
+      const before = generation;
+      busy = true;
+      updateControls();
+      try { await loadBoundary(); }
+      catch (error) { if (before === generation) gpsStatus(error.message); return; }
+      finally { if (before === generation) { busy = false; updateControls(); } }
+      if (before !== generation) return;
     }
     stopNavigation();
     const token = generation;
@@ -418,7 +520,7 @@
   }
   document.addEventListener('quick119:view', event => { if (event.detail.view === 'gps') restoreMap(); });
   if (window.ResizeObserver) new ResizeObserver(() => { if (mapVisible()) restoreMap(); }).observe(byId('car-route-map'));
-  byId('car-route-refresh').addEventListener('click', () => { if (selected && !tracking) void showRoute(selected); });
+  byId('car-route-refresh').addEventListener('click', () => { void refreshRoute(); });
   byId('car-route-start').addEventListener('click', startNavigation);
   byId('car-route-stop').addEventListener('click', () => {
     stopNavigation('안내 종료');
