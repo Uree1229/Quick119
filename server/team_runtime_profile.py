@@ -26,6 +26,7 @@ NORMALIZATION = 'CRLF bytes replaced with LF only; no other normalization'
 # updated only with the corresponding focused regression tests.
 APPROVED_SOURCE_OVERRIDES = {
     'server/db.py': '343a777e653d75636ede8925d1c0bbd34e7b8f01bcfb2cd1cae6aaa777b580b5',
+    'server/inquiry_workflow.py': 'ae4ebf242f791689ba24848e9055f08ccb4dfbb5e85b571bbf7fc500e380dbba',
     'server/service.py': '2d159756ade78e1bedfbf42bea3afe043ac4117dd6d62fbb695b48cf552e3c8d',
     'server/transport_reassignment.py': '80cc570ceb6ce1fdb556a17a8f11ba777ae54f5d2250df984ed346c85511bbe4',
 }
