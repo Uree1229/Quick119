@@ -46,10 +46,41 @@
         .finally(() => { loading = null; });
       await loading;
     }
+    // Suggested values stay out of the draft until a person taps 확정. 빼기 only hides one in this dialog.
+    const skipped = new Set();
+    function suggestionRow(s, editable) {
+      const row = document.createElement('div'), tag = document.createElement('span'),
+        text = document.createElement('span'), note = document.createElement('small');
+      row.className = 'tw-suggest'; row.dataset.suggestion = s.id;
+      tag.className = 'tw-suggest-tag'; tag.textContent = '제안';
+      text.className = 'tw-suggest-value'; text.textContent = value(s.field, s.value);
+      note.className = 'tw-suggest-note';
+      note.textContent = [s.note, s.replaces != null ? '지금 ' + value(s.field, s.replaces) : ''].filter(Boolean).join(' · ');
+      row.append(tag, text, note);
+      if (editable) {
+        const ok = document.createElement('button'), skip = document.createElement('button');
+        ok.type = skip.type = 'button';
+        ok.className = 'tw-suggest-accept'; ok.textContent = '확정'; ok.dataset.accept = s.id;
+        ok.setAttribute('aria-label', `${value(s.field, s.value)} 제안값 확정`);
+        skip.className = 'tw-suggest-skip'; skip.textContent = '빼기'; skip.dataset.skip = s.id;
+        skip.setAttribute('aria-label', `${value(s.field, s.value)} 제안값 빼기`);
+        row.append(ok, skip);
+      }
+      return row;
+    }
+    function pendingReview() {
+      const open = (draft.suggestions || []).filter(s => !skipped.has(s.id));
+      const covered = new Set(open.map(s => s.field));
+      // A disputed row with no suggestion left must be re-said or edited before the server accepts it.
+      const blocked = (draft.needs_input || []).filter(n => n.blocking && !groups.some(([, ...keys]) =>
+        keys.includes(n.field) && keys.some(key => covered.has(key))));
+      return {open, blocked};
+    }
     function draw(mode) {
       intent = mode;
       reviewed = revision();
-      const fields = draft.fields;
+      const fields = draft.fields, editable = canEdit() && draft.state !== 'SUBMITTED';
+      const {open, blocked} = pendingReview();
       $('command-title').textContent = mode === 'search' ? '이 정보로 병원을 탐색할까요?' : '환자정보 확인';
       const list = $('command-fields'); list.replaceChildren();
       for (const [label, ...keys] of groups) {
@@ -58,7 +89,19 @@
         if (label === '혈압' && (fields.systolic_bp != null || fields.diastolic_bp != null)) {
           dd.textContent = (fields.systolic_bp ?? '미확인') + ' / ' + (fields.diastolic_bp ?? '미확인') + ' mmHg';
         } else dd.textContent = keys.map(key => value(key, fields[key])).filter(Boolean).join(' · ') || '미확인';
-        item.append(dt, dd); list.append(item);
+        item.append(dt, dd);
+        const offers = open.filter(s => keys.includes(s.field));
+        const needs = (draft.needs_input || []).filter(n => keys.includes(n.field));
+        if (offers.length) {
+          item.dataset.suggest = 'true'; item.className = 'transport-review-wide';
+          item.append(...offers.map(s => suggestionRow(s, editable)));
+        } else if (needs.length) {
+          item.dataset.needs = 'true'; item.className = 'transport-review-wide';
+          const note = document.createElement('p');
+          note.className = 'tw-needs'; note.textContent = '확인 필요 · ' + needs.map(n => n.note).join(' · ');
+          item.append(note);
+        }
+        list.append(item);
       }
       // Every sent report in full, so the extracted values can be checked against the original wording.
       const sent = reports?.() || [], originals = $('command-reports');
@@ -70,13 +113,33 @@
         block.append(stamp, body); return block;
       }));
       if (originals && !sent.length) { const empty = document.createElement('p'); empty.textContent = '아직 전송한 보고가 없습니다.'; originals.append(empty); }
-      $('command-warnings').textContent = '';
+      const waiting = mode !== 'view' && (open.length || blocked.length);
+      $('command-warnings').textContent = !waiting ? '' : [
+        open.length ? `제안값 ${open.length}개를 확정하거나 빼면 눌러집니다.` : '',
+        blocked.length ? '인식 후보가 엇갈린 항목은 다시 말하거나 수정해 주세요.' : ''].filter(Boolean).join(' ');
       $('command-confirm').hidden = mode === 'view';
+      $('command-confirm').disabled = !!waiting;
       $('command-confirm').textContent = mode === 'search' ? '확인하고 병원 탐색' : '환자정보 확정';
       document.dispatchEvent(new CustomEvent('quick119:before-view', {detail: {view:'review'}}));
       if (!panel.open) panel.showModal();
-      (mode === 'view' ? $('command-close') : $('command-confirm')).focus();
+      const first = list.querySelector('[data-accept]');
+      (mode === 'view' ? $('command-close') : waiting && first ? first : $('command-confirm')).focus();
     }
+    $('command-fields').addEventListener('click', async event => {
+      const skip = event.target.closest('[data-skip]'), accept = event.target.closest('[data-accept]');
+      if (skip) { skipped.add(skip.dataset.skip); draw(intent); return; }
+      if (!accept || posting || !canEdit()) return;
+      posting = true; accept.disabled = true;
+      try {
+        const result = await api(endpoint() + '/suggestion',
+          {request_id: uuid(), revision: revision(), suggestion_id: accept.dataset.accept});
+        draft = result.draft;
+        draw(intent);
+      } catch (failure) {
+        await refresh(); draw(intent);
+        $('command-warnings').textContent = failure.message;
+      } finally { posting = false; }
+    });
     function handle(result) {
       draft = result.draft; lastHints = result.hints || [];
       const current = JSON.stringify(revision()) === JSON.stringify(result.revision);
@@ -101,6 +164,8 @@
     panel.addEventListener('cancel', event => { if (posting) event.preventDefault(); });
     $('command-confirm').addEventListener('click', async () => {
       if (posting || !reviewed || !panel.open || !canEdit() || intent === 'view') return;
+      const pending = pendingReview();
+      if (pending.open.length || pending.blocked.length) return;
       posting = true; $('command-confirm').disabled = $('command-close').disabled = true;
       const key = JSON.stringify([reviewed, intent]);
       if (confirmation?.key !== key) confirmation = {key, body:{request_id:uuid(), revision:reviewed, intent}};

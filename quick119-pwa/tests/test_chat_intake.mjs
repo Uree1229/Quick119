@@ -11,7 +11,7 @@ const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(reso
 
 function harness({restored = false, hospitalFailure = false, seoul = false, speech = true, tts = true, cloudSpeech = false,
   ttsVoices = [{name: '한국어', lang: 'ko-KR', localService: true, default: true}], audio = false, pcVoice = true,
-  intake = false, intakeEffect = null, viewport = false, embedded = false, conversationPages = [],
+  intake = false, intakeEffect = null, intakeDraft = null, suggestionDraft = null, viewport = false, embedded = false, conversationPages = [],
   patientCases = null, patientId = 'Q119-TEST-restored', newCase = !restored, hospitalList = null,
   storage = new Map()} = {}) {
   const nodes = new Map(), allNodes = new Set(), calls = [], timers = new Map(), speeches = [], utterances = [], audios = [];
@@ -128,14 +128,17 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
       return available ? {ok: true, status: 200, blob: async () => new Blob(['RIFF'], {type: 'audio/wav'})} : {ok: false, status: 503};
     }
     if (url.endsWith('/intake-draft') && options.method === 'GET') {
-      return response({draft: {id: 'draft-1', version: 1, fields: {}, field_metadata: {}, speak_text: ''}});
+      return response({draft: intakeDraft || {id: 'draft-1', version: 1, fields: {}, field_metadata: {}, speak_text: ''}});
     }
     if (url.endsWith('/intake-draft') && options.method === 'POST') {
-      return response({input_id: body.request_id, draft: {id: 'draft-1', version: 1, fields: {age: 10}, field_metadata: {},
+      return response({input_id: body.request_id, draft: intakeDraft || {id: 'draft-1', version: 1, fields: {age: 10}, field_metadata: {},
         speak_text: intakeEffect ? '나이 10세. 입력 내용을 확인해 주세요.' : '', ...(intakeEffect ? {warnings: ['나이 수치를 원문과 확인해 주세요.']} : {})},
         hints: [], action: 'observe', feedback: '환자 상태를 확인해 주세요.', revision: ['draft-1', 1], ...(intakeEffect ? {effect: intakeEffect} : {}),
         system_items: [{id: 'event:9', kind: 'system', type: 'crew_intake_reply', sender_role: 'system', sender_name: '시스템',
           at: 5, text: '', data: {reply: '나이: 10세', command_text: body.text}, order_key: [5, 0, 9]}]});
+    }
+    if (url.endsWith('/intake-draft/suggestion')) {
+      return response({accepted: {id: body.suggestion_id}, revision: [suggestionDraft.id, suggestionDraft.version], draft: suggestionDraft});
     }
     if (url.includes('/conversation?')) {
       state.beforeConversation?.(); state.beforeConversation = null;
@@ -399,6 +402,45 @@ test('the confirmation sheet lists every sent report in full instead of the spok
   assert.equal(h.$('command-reports').children.length, 1);
   assert.equal(block.children[1].textContent, report.text);
   assert.equal(h.$('command-warnings').textContent, '', 'extraction warnings and the spoken summary are not shown');
+});
+
+test('suggested values stay out of the draft until tapped, and the search waits for every one', async () => {
+  const offers = [{id: 's-pulse', field: 'pulse', value: 90, source: 'alternative', note: '다른 후보 19'},
+    {id: 's-chest', field: 'symptoms', value: '흉통', source: 'term', note: '흥통 → 흉통'}];
+  const needs = [{field: 'systolic_bp', note: '원문 1876'}];
+  const base = {id: 'draft-1', version: 1, state: 'DRAFT', fields: {age: 62}, field_metadata: {}, speak_text: ''};
+  const h = harness({restored: true, intake: true, intakeEffect: 'explicit_submit_api_required',
+    intakeDraft: {...base, suggestions: offers, needs_input: needs},
+    suggestionDraft: {...base, version: 2, fields: {age: 62, pulse: 90}, suggestions: [offers[1]], needs_input: needs}});
+  await settle();
+  h.type('병원 찾아줘'); await h.submit(); await settle();
+  assert.equal(h.$('command-panel').open, true);
+  const rows = () => h.$('command-fields').children;
+  const offerRows = () => rows().flatMap(row => row.children.filter(child => child.dataset.suggestion));
+  assert.deepEqual(offerRows().map(row => row.dataset.suggestion), ['s-chest', 's-pulse']);
+  const pulse = rows().find(row => row.children[0].textContent === '맥박');
+  assert.equal(pulse.children[1].textContent, '미확인', 'the suggested pulse is not in the draft yet');
+  assert.equal(pulse.dataset.suggest, 'true');
+  assert.equal(offerRows()[1].children[2].textContent, '다른 후보 19');
+  const pressure = rows().find(row => row.children[0].textContent === '혈압');
+  assert.equal(pressure.dataset.needs, 'true');
+  assert.equal(pressure.children[2].textContent, '확인 필요 · 원문 1876');
+  assert.equal(h.$('command-confirm').disabled, true);
+  assert.match(h.$('command-warnings').textContent, /제안값 2개를 확정하거나 빼면 눌러집니다/);
+  const [onClick] = h.$('command-fields').listeners.get('click');
+  const button = (id, kind) => offerRows().find(row => row.dataset.suggestion === id).children
+    .find(child => child.dataset[kind] === id);
+  const tap = async node => { await onClick({target: {closest: selector => selector === `[data-${Object.keys(node.dataset)[0]}]` ? node : null}}); await settle(); };
+  await tap(button('s-pulse', 'accept'));
+  const sent = h.calls.find(call => call.url.endsWith('/intake-draft/suggestion'));
+  assert.deepEqual([sent.body.suggestion_id, sent.body.revision], ['s-pulse', ['draft-1', 1]]);
+  assert.equal(rows().find(row => row.children[0].textContent === '맥박').children[1].textContent, '90');
+  assert.equal(h.$('command-confirm').disabled, true, 'one suggestion is still open');
+  await tap(button('s-chest', 'skip'));
+  assert.equal(offerRows().length, 0);
+  assert.equal(h.$('command-confirm').disabled, false, '빼기 settles the last suggestion without writing it');
+  assert.equal(h.$('command-warnings').textContent, '');
+  assert.equal(h.calls.filter(call => call.url.endsWith('/intake-draft/suggestion')).length, 1);
 });
 
 test('TTS plays PC-rendered Korean audio in order and falls back to the device voice when the PC voice is down', async () => {

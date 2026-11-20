@@ -681,3 +681,15 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
 #transport-workspace[data-kb=open] .tw-steps li{color:#fff}
 #transport-workspace[data-kb=open] .tw-steps [data-state=done] .tw-step-dot{border-color:#fff;background:#fff}
 #transport-workspace[data-kb=open] .tw-steps [data-state=done] .tw-step-dot::before{background:var(--tw-navy)}
+/* Review dialog: suggested values wait for an explicit 확정 (or 빼기) before the draft changes. */
+#transport-command-fields>div[data-suggest=true]{border-color:#f0d29a;background:#fffaf0}
+#transport-command-fields>div[data-needs=true]{border-color:#f3c4c6;background:#fff6f6}
+#transport-command-fields .tw-suggest{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:6px;padding:7px 8px;border-radius:10px;background:#fff1d6}
+#transport-command-fields .tw-suggest-tag{flex:none;padding:2px 8px;border-radius:999px;background:#ffe1a6;color:#7a4800;font-size:11px;font-weight:900}
+#transport-command-fields .tw-suggest-value{flex:1 1 auto;min-width:0;color:var(--tw-ink);font-size:15px;font-weight:900;overflow-wrap:anywhere}
+#transport-command-fields .tw-suggest-note{flex:1 1 100%;order:5;color:#6b5a3a;font-size:12px;font-weight:600}
+#transport-command-fields .tw-suggest button{flex:none;min-height:36px;padding:0 12px;border-radius:10px;font-size:13px;font-weight:800}
+#transport-command-fields .tw-suggest-accept{border:1px solid var(--tw-navy);background:#fff;color:var(--tw-navy)}
+#transport-command-fields .tw-suggest-skip{border:1px solid transparent;background:transparent;color:#5d6b7c}
+#transport-command-fields .tw-needs{margin-top:4px!important;color:#b42332;font-size:12.5px;font-weight:800}
+#transport-command-confirm:disabled{opacity:.55;cursor:not-allowed}
