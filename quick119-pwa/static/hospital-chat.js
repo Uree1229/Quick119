@@ -293,7 +293,7 @@
     'inquiry_workflow_waiting', 'inquiry_workflow_exhausted', 'transport_inquiry_started',
     'transport_inquiry_candidates_preserved', 'transport_inquiry_ready', 'transport_inquiry_exhausted',
     'transport_alternative_requested', 'transport_inquiry_batch', 'transport_inquiry_decision',
-    'transport_inquiry_waiting']);
+    'transport_inquiry_waiting', 'inquiry_skipped_recent_decline']);
   const adjustmentStartTypes = new Set(['adjustment_needed', 'transport_alternative_requested']);
   const adjustmentEndTypes = new Set(['destination_changed', 'hospital_keeps', 'patient_cancelled']);
   const outcomeTypes = new Set(['destination_changed', 'destination_confirmed', 'departed',
@@ -465,7 +465,8 @@
       seen.add(hospitalId);
       const inquiry = snapshot?.inquiries?.find(entry => entry.hospital_id === hospitalId);
       const name = inquiry?.hospital_name || item.hospital_name || hospitalId;
-      const status = inquiry ? inquiryLabels[inquiry.state] || inquiry.state : '';
+      const status = inquiry ? inquiryLabels[inquiry.state] || inquiry.state
+        : item.type === 'inquiry_skipped_recent_decline' ? `제외(최근 '${item.data?.reason || '수용 불가'}' 거절)` : '';
       updates.push(status ? `${name} ${status}` : item.text);
     }
     if (!updates.length) return group[group.length - 1]?.text || '병원 문의 진행 상황이 갱신됐습니다.';

@@ -37,7 +37,8 @@ class TeamRuntimeTests(unittest.TestCase):
         self.assertIn('APPROVED_WORKFLOW_SOURCE_OVERRIDE',
                       [warning['code'] for warning in report['warnings']])
         self.assertEqual(set(team_runtime_profile.APPROVED_SOURCE_OVERRIDES), {
-            'server/db.py', 'server/service.py', 'server/transport_reassignment.py'})
+            'server/db.py', 'server/inquiry_workflow.py', 'server/service.py',
+            'server/transport_reassignment.py'})
         with patch.object(team_runtime_profile, 'APPROVED_SOURCE_OVERRIDES',
                           {'server/transport_reassignment.py': '0' * 64}):
             rejected = team_runtime.verify_profile(mode='voice-only')

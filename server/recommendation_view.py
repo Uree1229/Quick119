@@ -2,7 +2,7 @@
 from contextlib import contextmanager
 import uuid
 
-from . import planning, service, allocation_input_review, db
+from . import planning, service, allocation_input_review, db, decline_memory
 
 
 @contextmanager
@@ -40,14 +40,28 @@ def search_and_inquire(conn, now, pid, estimator):
         service._require(patient['state'] == 'WAITING', 'INVALID_STATE',
                          '수용 문의 전 상태의 환자만 후보를 탐색할 수 있습니다', 409, state=patient['state'])
         result = service.candidates(conn, now, pid, estimator)
-        eligible = [candidate for candidate in result['candidates']
-                    if candidate['auto_inquiry_eligible']][:3]
+        eligible, skipped = [], []
+        for candidate in result['candidates']:
+            if len(eligible) == 3:
+                break
+            if not candidate['auto_inquiry_eligible']:
+                continue
+            # 같은 조건의 환자를 최근 같은 사유로 거절한 병원은 첫 자동 문의에서도 뺀다.
+            decline = decline_memory.active_decline(conn, now, patient, candidate['hospital_id'])
+            if decline:
+                skipped.append(decline)
+                continue
+            eligible.append(candidate)
         existing = conn.execute('SELECT 1 FROM inquiries WHERE patient_id=? LIMIT 1', (pid,)).fetchone()
         hospital_ids = [candidate['hospital_id'] for candidate in eligible]
         if hospital_ids and not existing:
+            for decline in skipped:
+                decline_memory.note_skip(conn, now, patient, decline)
             service._send_inquiries(conn, now, pid, hospital_ids, actor='automatic_candidate_search')
         return dict(result, candidates=eligible,
-                    automatic_inquiry=dict(hospital_ids=hospital_ids, already_started=bool(existing)),
+                    automatic_inquiry=dict(hospital_ids=hospital_ids, already_started=bool(existing),
+                                           skipped_recent_declines=[dict(hospital_id=d['hospital_id'], reason=d['reason'])
+                                                                    for d in skipped]),
                     input_review=allocation_input_review.assess(patient, now))
 
 

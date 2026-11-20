@@ -77,6 +77,8 @@ def _event_item(event, hospital_name):
         'inquiry_policy_changed': f'{policy_label}으로 문의 정책 설정을 변경했습니다.',
         'inquiry_policy_decided': f"{policy_label} · {policy_reasons.get(data.get('reason'), '다음 문의를 재검토했습니다.')}",
         'inquiry_workflow_ready': '유효한 수용 응답이 있습니다. 담당자의 목적지 확정을 기다립니다.',
+        'inquiry_skipped_recent_decline':
+            f"최근 같은 조건의 문의를 '{data.get('reason', '수용 불가')}' 사유로 거절한 {name}에는 자동 문의를 보내지 않았습니다.",
         'inquiry_workflow_waiting': data.get('note') or '새 후보가 없어 기존 문의의 회신을 확인하고 있습니다.',
         'inquiry_workflow_exhausted': data.get('note') or '자동 문의가 종료됐습니다. 담당자의 확인이 필요합니다.',
         'inquiry_question': f'{name}에서 추가 정보를 요청했습니다.',

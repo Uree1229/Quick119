@@ -2,11 +2,12 @@
 
 기본 3곳/60초/최대 10곳/300초는 시연을 위한 운영 설정값이다. 환자 치료의
 허용 대기시간이나 임상 기준을 뜻하지 않는다. 같은 환자정보 버전에서 연락한 병원에는
-자동 재문의하지 않으며 미응답을 수용 불가로 바꾸지 않는다.
+자동 재문의하지 않으며 미응답을 수용 불가로 바꾸지 않는다. 같은 조건의 환자를 최근
+같은 사유로 거절한 병원은 자동 문의 대상에서 뺀다(decline_memory).
 """
 import time
 
-from . import db, service, inquiry_policies, inquiry_observations
+from . import db, service, inquiry_policies, inquiry_observations, decline_memory
 
 BATCH_SIZE = 3
 WAIT_SECONDS = 60
@@ -280,6 +281,11 @@ def _eligible_now(conn, now, patient, hospital_id):
         if (resource is not None and resource['free'] is not None and
                 not resource['stale'] and resource['free'] < need):
             return False
+    # 같은 조건의 환자를 최근 같은 사유로 거절한 병원에는 다시 자동 문의하지 않는다.
+    decline = decline_memory.active_decline(conn, now, patient, hospital_id)
+    if decline:
+        decline_memory.note_skip(conn, now, patient, decline)
+        return False
     return True
 
 
