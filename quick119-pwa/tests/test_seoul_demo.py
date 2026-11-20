@@ -88,7 +88,8 @@ class SeoulHospitalDemo(unittest.TestCase):
         for row, fixture in zip(self.conn.execute("SELECT * FROM hospitals ORDER BY id"),
                                 sorted(load_catalog()["hospitals"], key=lambda h: h["id"]), strict=True):
             self.assertEqual((row["name"], row["address"], row["lat"], row["lon"]),
-                             tuple(fixture[k] for k in ["name", "address", "lat", "lon"]))
+                             (fixture.get("display_name", fixture["name"]), fixture["address"],
+                              fixture["lat"], fixture["lon"]))
             self.assertFalse(row["phone"])
             ids = json.loads(row["source_ids"])
             self.assertEqual((ids["nmc"], ids["identity_source"]), (fixture["hpid"], "seoul_public"))

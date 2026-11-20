@@ -4,6 +4,13 @@
   if (!root) return;
   const byId = id => document.getElementById('transport-' + id);
   let view = 'chat', focusTimer = null;
+  const navLinks = document.querySelectorAll('.bottom-nav [data-workspace-view]');
+  function updateNav() {
+    navLinks.forEach(link => {
+      if (link.dataset.workspaceView === view) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    });
+  }
   root.dataset.view = view;
   function show(next) {
     if (next === view) return;
@@ -16,11 +23,22 @@
     byId('toggle-label').textContent = view === 'gps' ? '채팅' : '지도';
     byId('title').textContent = view === 'gps' ? '지도 · 병원 선택' : '접수 채팅';
     byId('toggle').setAttribute('aria-expanded', String(view === 'chat'));
+    updateNav();
+    const url = new URL(location.href);
+    if (view === 'gps') url.searchParams.set('view', 'map');
+    else url.searchParams.delete('view');
+    history.replaceState(null, '', url);
     document.dispatchEvent(new CustomEvent('quick119:view', {detail: {view}}));
     byId('title').focus({preventScroll: true});
   }
   byId('toggle').addEventListener('click', () => show(view === 'gps' ? 'chat' : 'gps'));
   byId('open-map')?.addEventListener('click', () => show('gps'));
+  navLinks.forEach(link => link.addEventListener('click', event => {
+    event.preventDefault();
+    show(link.dataset.workspaceView);
+  }));
+  updateNav();
+  if (new URLSearchParams(location.search).get('view') === 'map') show('gps');
   document.addEventListener('quick119:show-view', event => {
     if (event.detail?.view === 'gps' || event.detail?.view === 'chat') show(event.detail.view);
   });

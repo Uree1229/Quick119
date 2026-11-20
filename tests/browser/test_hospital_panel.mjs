@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {buildThreads,threadStatus,summaryFields,acceptBlock,inquiryLog,chatLog,actionCount,inquiryStage,needsReview,
+import {buildThreads,threadStatus,summaryFields,acceptBlock,inquiryLog,chatLog,compactChatLog,actionCount,inquiryStage,needsReview,
   etaLabel,patientTitle,severityKey,chatSummary,threadBadge,SEVERITY,DECLINE_REASONS,MAX_CLOSED} from '../../hospital-ui/panel-state.mjs';
 
 const NOW=1000;
@@ -11,6 +11,19 @@ const patient=(id,extra={})=>({id,age:60,symptoms:'흉통',priority_source:'expe
 const inquiry=(id,state,extra={},p={})=>({id,state,version:1,created_at:NOW-30,expires_at:null,question:null,answer:null,reason:null,overdue:false,
   patient:patient(`P${id}`,p),...extra});
 const stages=threads=>threads.map(t=>`${t.patientId}:${t.stage}`);
+
+test('반복 기록만 접고 대화와 중요한 알림은 유지한다',()=>{
+  const items = [
+    {kind:'system',type:'patient_updated',text:'환자정보가 수정됐습니다.',id:'1',order_key:[1]},
+    {kind:'system',type:'other',text:'이송 관련 기록이 등록됐습니다.',id:'2',order_key:[2]},
+    {kind:'message',sender_role:'patient',text:'환자 상태',id:'3',order_key:[3]},
+    {kind:'system',type:'enroute_patient_change_requested',text:'확인 필요',id:'4',order_key:[4]},
+  ];
+  const result = compactChatLog(chatLog(items));
+  assert.deepEqual(result.map(e=>e.kind),['routine-group','crew','notice']);
+  assert.deepEqual(result[0].entries.map(e=>e.text),[items[0].text,items[1].text]);
+  assert.equal(result[2].text,'확인 필요');
+});
 
 test('환자 한 명이 대화 하나이고, 목록은 상태나 중증도와 상관없이 먼저 온 순서다',()=>{
   const threads=buildThreads({

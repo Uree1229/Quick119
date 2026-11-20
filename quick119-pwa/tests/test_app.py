@@ -92,8 +92,11 @@ class Quick119Tests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("퀵119", response.text)
         self.assertIn("응급상황 접수 시작", response.text)
-        for target in ["/transport/", "/patients", "/emergency/hospitals"]:
+        for target in ["/transport/", "/patients", "/transport/?view=map"]:
             self.assertIn(f'href="{target}"', response.text)
+        self.assertNotIn("주변 응급실", response.text)
+        nav = response.text.split('<nav class="bottom-nav"', 1)[1].split('</nav>', 1)[0]
+        self.assertEqual(re.findall(r'<span>(홈|채팅|지도|환자)</span>', nav), ['홈', '채팅', '지도', '환자'])
         self.assertIn('href="/transport/"', response.text)
         self.assertIn("<span>채팅</span>", response.text)
         self.assertNotIn("로컬 전용", response.text)

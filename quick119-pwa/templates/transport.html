@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}접수 채팅 | QUICK119{% endblock %}
 {% block header %}{% endblock %}
-{# Full-height chat/map screen: keyboard resizes the layout, and the chat composer replaces the bottom menu. #}
+{# Full-height chat/map screen: the keyboard resizes the layout. #}
 {% block viewport %}<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">{% endblock %}
 {% block environment_note %}{% endblock %}
 {% block shell_class %} app-shell--workspace{% endblock %}
@@ -10,4 +10,4 @@
   {% include 'transport_workspace.html' %}
 </main>
 {% endblock %}
-{% block shell_footer %}{% endblock %}
+{% block shell_footer %}{% include 'bottom_nav.html' %}{% endblock %}

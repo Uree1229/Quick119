@@ -45,9 +45,18 @@
         <div class="qp-chat-title"><strong id="chatTitle"></strong><span id="chatStatus" role="status"></span></div>
       </div>
       <section id="log" class="qp-log" role="log" aria-label="대화 내용" tabindex="0"><div id="logInner" class="qp-log-inner"></div></section>
+      <section id="locationSheet" class="qp-loc-sheet" aria-label="이송 위치" hidden>
+        <div class="qp-loc-bar">
+          <strong>이송 위치</strong>
+          <a id="locationPopout" class="qp-loc-pop" target="quick119-transport-location">새 창으로</a>
+          <button type="button" id="locationClose" class="qp-loc-close">대화로 돌아가기</button>
+        </div>
+        <iframe id="locationFrame" class="qp-loc-frame" title="환자와 목적지 지도"></iframe>
+      </section>
       <footer class="qp-dock">
         <div id="actions" class="qp-actions"></div>
         <form id="composer" class="qp-composer" hidden>
+          <a id="locationLink" class="qp-location" target="quick119-transport-location" aria-controls="locationSheet" aria-expanded="false" hidden>위치 조회</a>
           <label class="qp-sr" for="message" id="messageLabel">구급대에 보낼 내용</label>
           <input id="message" type="text" maxlength="1000" autocomplete="off">
           <button type="submit" id="send" class="qp-send">보내기</button>

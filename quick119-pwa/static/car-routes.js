@@ -193,7 +193,7 @@
       for (const hospital of hospitals) {
         const label = document.createElement('span'), rank = document.createElement('b');
         label.className = 'tw-pin-label'; rank.textContent = String(hospital.rank); label.append(rank);
-        L.marker([hospital.lat, hospital.lon], {title: `${hospital.rank}순위 ${hospital.name}`, keyboard: true, riseOnHover: true,
+        L.marker([hospital.lat, hospital.lon], {title: hospital.overview ? hospital.name : `${hospital.rank}순위 ${hospital.name}`, keyboard: true, riseOnHover: true,
           icon: L.divIcon({className: 'tw-pin', html: label, iconSize: [34, 40], iconAnchor: [17, 38], tooltipAnchor: [0, -34]})})
           .bindTooltip(document.createTextNode(hospital.name), {direction: 'top'})
           .on('click', () => document.dispatchEvent(new CustomEvent('quick119:candidate-focus', {detail: {id: hospital.id}})))

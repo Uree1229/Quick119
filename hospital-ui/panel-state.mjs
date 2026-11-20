@@ -182,9 +182,22 @@ export function chatLog(items) {
     for (let i = 0; i < 3; i++) { const d = (a.order_key?.[i] ?? 0) - (b.order_key?.[i] ?? 0); if (d) return d; }
     return 0;
   }).map((item) => {
-    if (item.kind === 'system') return { kind: 'notice', text: item.text || '', id: item.id, at: item.at };
+    if (item.kind === 'system') return { kind: 'notice', text: item.text || '', id: item.id, at: item.at,
+      routine: ['patient_updated', 'patient_information_amended'].includes(item.type)
+        || item.text === '이송 관련 기록이 등록됐습니다.' };
     return { kind: item.sender_role === 'hospital' ? 'me' : 'crew', text: item.body ?? item.text ?? '', id: item.id, at: item.at, sender: item.sender_name || '' };
   });
+}
+
+export function compactChatLog(entries) {
+  const result = [];
+  for (const entry of entries) {
+    const last = result[result.length - 1];
+    if (entry.routine && last?.kind === 'routine-group') last.entries.push(entry);
+    else if (entry.routine) result.push({kind: 'routine-group', id: entry.id, entries: [entry]});
+    else result.push(entry);
+  }
+  return result;
 }
 
 export function actionCount(threads, now) {
