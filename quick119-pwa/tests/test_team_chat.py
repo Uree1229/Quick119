@@ -959,6 +959,22 @@ class LiveTeamChat(unittest.TestCase):
         self.assertEqual((declined['state'], declined['reason']), ('DECLINED', '병상'))
         self.assertLessEqual(js("document.documentElement.scrollWidth"), 388)
 
+        # Finished conversations (arrived, declined) fold into one line and come back on a second press.
+        js("document.getElementById('back').click()")
+        wait("document.getElementById('finishedToggle')")
+        finished = "document.querySelectorAll('.qp-row[data-finished=true]').length"
+        self.assertEqual(js(finished), 2)
+        self.assertEqual(js("document.getElementById('finishedToggle').textContent"), '끝난 대화 2')
+        self.assertGreaterEqual(js("document.getElementById('finishedToggle').getBoundingClientRect().height"), 44)
+        js("document.getElementById('finishedToggle').click()")
+        self.assertEqual(js(finished), 0)
+        self.assertEqual(js("document.getElementById('finishedToggle').getAttribute('aria-expanded')"), 'false')
+        self.assertEqual(js("document.activeElement.id"), 'finishedToggle')
+        time.sleep(3.5)  # a refresh keeps it folded
+        self.assertEqual(js(finished), 0)
+        js("document.getElementById('finishedToggle').click()")
+        self.assertEqual(js(finished), 2)
+
     def test_emr_demo_embeds_the_panel_and_shows_its_pending_count(self):
         from chrome_driver import Chrome
         desk = Chrome(Path('C:/Program Files/Google/Chrome/Application/chrome.exe'), self.run_dir / ('emr-profile-' + uuid4().hex))
@@ -987,6 +1003,8 @@ class LiveTeamChat(unittest.TestCase):
         # Wide enough for the messenger layout: the list and the chat sit side by side inside the panel.
         self.assertGreater(js(f"{panel}.getElementById('threads').getBoundingClientRect().width"), 200)
         self.assertGreater(js(f"{panel}.querySelector('.qp-chat').getBoundingClientRect().width"), 350)
+        # The list row already names the open conversation, so the chat does not repeat it in a header line.
+        self.assertLessEqual(js(f"{panel}.querySelector('.qp-chat-head').getBoundingClientRect().height"), 1)
         self.assertGreater(js("document.querySelectorAll('#rows tr').length"), 10)
         self.assertLessEqual(js("document.documentElement.scrollWidth"), 1280)
         self.assertTrue(js("document.getElementById('dock').hidden && document.getElementById('toast').hidden"))
