@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>가상 EMR 옆 채팅 패널 시연</title>
+<!-- 시연용 화면. 병원이 종일 보는 EMR 응급실 현황판을 가상 데이터로 그리고, 그 옆에 채팅 패널(panel.html)을 iframe으로 붙인다.
+     실제 병원 시스템이나 실제 환자 정보가 아니다. 두 화면은 같은 출처의 postMessage로만 주고받는다.
+     패널 → EMR: 답해야 하는 건수, 우리 병원 환자 목록(상태·중증도·도착 예정). 수용·확정된 환자는 도착 예정에 뜨고, 도착 확인하면 침상에 들어간다.
+     EMR → 패널: 대화 열기, 배정한 침상을 구급대에 안내하기. 침상 배정은 이 화면의 메모리에만 있고 새로 고치면 사라진다. -->
+<style>
+  :root{--ink:#1f2a37;--muted:#44546a;--line:#c5ced8;--navy:#17375e;font-family:"Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif;color:var(--ink);background:#e9edf2}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{display:flex;overflow:hidden;font-size:13px;line-height:1.4}
+  button,select{font:inherit}
+  button{cursor:pointer}
+  button:disabled{cursor:not-allowed;opacity:.5}
+  :is(button,select):focus-visible{outline:3px solid #3486e4;outline-offset:2px}
+  [hidden]{display:none!important}
+  .emr{flex:1;min-width:0;display:flex;flex-direction:column}
+  .emr-bar{display:flex;align-items:center;gap:10px;flex:none;min-height:46px;padding:4px 18px;background:#3a4654;color:#f3f5f8}
+  .emr-bar strong{font-size:15px;white-space:nowrap}
+  .emr-tag{padding:2px 10px;border-radius:10px;background:#8a5a00;color:#fff;font-size:12px;font-weight:700;white-space:nowrap}
+  .emr-inbox{min-height:36px;margin-left:auto;padding:0 12px;border:0;border-radius:18px;background:#e5484d;color:#fff;font-weight:700;white-space:nowrap}
+  .emr-tabs{display:flex;gap:4px;flex:none;padding:8px 18px 0;background:#dde3ea;white-space:nowrap;overflow:hidden}
+  .emr-tabs span{padding:8px 12px;color:var(--muted)}
+  .emr-tabs span:first-child{border-radius:8px 8px 0 0;background:#fff;color:var(--ink);font-weight:700}
+  .emr-tabs span[data-on=true]{color:#a3262b;font-weight:700}
+  .emr-main{flex:1;min-height:0;margin:0 18px;overflow:auto;background:#fff;border:1px solid var(--line);border-top:0}
+  /* 도착 예정: 패널에서 넘어온 환자 */
+  .expected{padding:10px 12px;border-bottom:2px solid var(--line);background:#f4f8fd}
+  .expected h2{margin:0 0 6px;font-size:13px;color:var(--navy)}
+  .expected h2 small{font-weight:400;color:var(--muted)}
+  .expected-empty{margin:0;color:var(--muted)}
+  .exp{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 10px;border:1px solid #c9d6e6;border-radius:10px;background:#fff}
+  .exp+.exp{margin-top:6px}
+  .exp-main{flex:1 1 180px;min-width:0}
+  .exp-main strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .exp-main span{font-size:12px;color:var(--muted)}
+  .exp-ctl{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .exp select{min-height:36px;padding:0 8px;border:1px solid #b6c1cd;border-radius:8px;background:#fff}
+  .exp button{min-height:36px;padding:0 12px;border:1px solid #b6c1cd;border-radius:8px;background:#fff;color:var(--ink);font-weight:700}
+  .exp button.go{border-color:var(--navy);background:var(--navy);color:#fff}
+  .exp-bed{padding:3px 10px;border-radius:10px;background:#dbe9fb;color:#153e75;font-weight:700}
+  .sev{display:grid;place-items:center;flex:none;width:38px;height:38px;border-radius:13px;background:#6b7788;color:#fff;font-size:11px;font-weight:900}
+  .sev[data-sev=urgent]{background:#b4232a}.sev[data-sev=severe]{background:#c2410c}.sev[data-sev=moderate]{background:#f2c230;color:#3a2a00}.sev[data-sev=mild]{background:#1f6f4a}
+  table{width:100%;border-collapse:collapse}
+  th{position:sticky;top:0;padding:9px 10px;border-bottom:2px solid var(--line);background:#fff;color:var(--muted);font-size:12px;text-align:left;white-space:nowrap}
+  td{height:38px;padding:0 10px;border-bottom:1px solid #e3e8ed;white-space:nowrap}
+  td.bed{font-weight:700}
+  td.small{color:var(--muted);font-size:12px}
+  tr[data-bed=clean] td{background:#eef7ea}
+  tr[data-bed=dirty] td{background:#fff6d6}
+  tr[data-bed=reserved] td{background:#dbe9fb;color:#153e75;font-weight:700}
+  tr[data-fresh=true] td{background:#e5f5ed;box-shadow:inset 0 0 0 9999px rgb(31 111 74 / .06)}
+  tr[data-fresh=true] td.bed{box-shadow:inset 4px 0 0 #1f6f4a}
+  .ktas{display:inline-block;min-width:20px;padding:1px 7px;border-radius:10px;text-align:center;font-weight:700;font-size:12px}
+  .ktas[data-k="2"]{background:#b4232a;color:#fff}.ktas[data-k="3"]{background:#f2c230;color:#3a2a00}.ktas[data-k="4"]{background:#1f6f4a;color:#fff}
+  .emr-foot{display:flex;align-items:center;gap:8px;flex:none;min-height:48px;padding:0 18px;color:var(--muted);font-size:12.5px}
+  .emr-foot p{min-width:0;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .emr-foot p[data-on=true]{color:#145a3c;font-weight:700}
+  /* 패널 자리: 접으면 가장자리 버튼과 알림만 남는다 */
+  .side{position:relative;flex:none;width:min(620px,62vw);border-left:1px solid #b9c5d3;box-shadow:-10px 0 28px rgb(13 37 67 / .16);background:#f5f7fb}
+  .side iframe{display:block;width:100%;height:100%;border:0}
+  .handle{position:absolute;left:-28px;top:50%;display:grid;place-items:center;width:28px;height:64px;margin-top:-32px;padding:0;border:1px solid #b9c5d3;border-right:0;border-radius:10px 0 0 10px;background:#fff;color:var(--navy)}
+  .dock{position:fixed;right:0;top:150px;display:flex;flex-direction:column;align-items:center;gap:6px;width:56px;padding:12px 0;border:0;border-radius:14px 0 0 14px;background:var(--navy);color:#fff;box-shadow:-6px 6px 18px rgb(13 37 67 / .28)}
+  .dock i{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:#e5484d;font-style:normal;font-weight:900;font-size:22px;line-height:1}
+  .dock b{font-size:12px}
+  .dock span{min-width:22px;padding:1px 6px;border-radius:11px;background:#3b5b82;font-size:12px;font-weight:900;text-align:center}
+  .dock span[data-on=true]{background:#e5484d}
+  .toast{position:fixed;right:76px;bottom:28px;display:flex;align-items:center;gap:12px;width:360px;max-width:calc(100vw - 96px);padding:14px;border:2px solid #e5484d;border-radius:16px;background:#fff;box-shadow:0 14px 36px rgb(13 37 67 / .32);font-size:15px;font-weight:700;color:#a3262b}
+  .toast span{flex:1}
+  .toast button{min-height:44px;padding:0 16px;border:0;border-radius:12px;background:var(--navy);color:#fff;font-weight:700}
+  body[data-panel=closed] .side{display:none}
+  @media(max-width:860px){.emr{display:none}.side{width:100%;border:0}.handle{display:none}}
+</style>
+</head>
+<body data-panel="open">
+<main class="emr" aria-label="가상 EMR 응급실 현황판">
+  <div class="emr-bar"><strong>응급실 현황판</strong><span class="emr-tag">가상 EMR · 시연용 화면</span>
+    <button type="button" class="emr-inbox" id="inbox" hidden></button></div>
+  <div class="emr-tabs"><span id="tabBeds">전체 병상</span><span>대기실 6</span><span id="tabExpected">도착 예정 0</span><span>퇴실 대기 3</span></div>
+  <div class="emr-main">
+    <section class="expected" aria-labelledby="expectedTitle">
+      <h2 id="expectedTitle">도착 예정 환자 <small>· 오른쪽 퀵119 패널에서 수용한 환자가 여기에 뜹니다</small></h2>
+      <div id="expected"></div>
+    </section>
+    <table>
+      <thead><tr><th>구역·침상</th><th>환자</th><th>나이·성별</th><th>KTAS</th><th>주증상</th><th>재실</th><th>담당의</th><th>검사·영상</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div class="emr-foot"><p id="sync" role="status">가상 데이터입니다. 실제 병원 시스템과 실제 환자 정보가 아닙니다.</p></div>
+</main>
+<aside class="side" id="side" aria-label="퀵119 수용 문의 패널 자리">
+  <button type="button" class="handle" id="collapse" aria-label="패널 접기" aria-controls="side" aria-expanded="true">
+    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+  </button>
+  <iframe id="panelFrame" title="퀵119 수용 문의 패널"></iframe>
+</aside>
+<button type="button" class="dock" id="dock" aria-controls="side" aria-expanded="false" hidden><i aria-hidden="true">+</i><b>문의</b><span id="badge" data-on="false">0</span></button>
+<div class="toast" id="toast" role="status" hidden><span id="toastText"></span><button type="button" id="toastOpen">열기</button></div>
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, props = {}, ...children) => {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(props)) {
+      if (value == null || value === false) continue;
+      if (key === 'class') node.className = value; else if (key === 'text') node.textContent = value;
+      else if (key.startsWith('on')) node.addEventListener(key.slice(2), value); else node.setAttribute(key, value === true ? '' : value);
+    }
+    node.append(...children.filter((child) => child != null));
+    return node;
+  };
+  const requested = new URLSearchParams(location.search).get('hid') || '';
+  const hid = /^H\d{2}$/.test(requested) ? requested : 'H01';
+  const frame = $('panelFrame');
+  frame.src = 'panel.html?hid=' + hid;
+  // 가상 병상 현황. 이름은 가린 표기이며 실제 환자가 아니다.
+  const beds = [
+    ['A-01', '김○○', '58 남', 2, '흉통, 식은땀', '0:42', '이○○', '심전도 완료 · 혈액 대기'],
+    ['A-02', '박○○', '73 여', 3, '호흡곤란', '1:15', '이○○', '흉부 X선 완료'],
+    ['A-03', '최○○', '41 남', 4, '복통', '0:28', '정○○', '혈액 대기'],
+    ['A-04', '', '', 0, '', '', '', '', 'clean'],
+    ['A-05', '강○○', '19 남', 4, '손목 통증', '0:55', '한○○', 'X선 대기'],
+    ['B-01', '윤○○', '66 남', 2, '의식 저하', '0:09', '정○○', 'CT 진행 중'],
+    ['B-02', '장○○', '29 여', 4, '발목 통증', '1:48', '한○○', 'X선 완료'],
+    ['B-03', '임○○', '80 여', 3, '어지럼', '4:05', '한○○', '혈액 완료'],
+    ['B-04', '', '', 0, '', '', '', '', 'dirty'],
+    ['C-01', '오○○', '35 남', 4, '열상', '0:51', '한○○', '처치 중'],
+    ['C-02', '서○○', '52 여', 3, '발열', '1:22', '이○○', '혈액 대기 · 소변 완료'],
+    ['C-03', '조○○', '8 남', 3, '발열, 구토', '0:33', '정○○', '혈액 대기'],
+    ['C-04', '', '', 0, '', '', '', '', 'clean'],
+    ['격리-1', '문○○', '47 남', 3, '기침, 발열', '0:36', '정○○', '검체 대기'],
+    ['소생-1', '', '', 0, '', '', '', '', 'clean'],
+    ['소생-2', '', '', 0, '', '', '', '', 'clean'],
+  ].map(([bed, name, age, ktas, cc, los, md, tests, state]) => ({ bed, name, age, ktas, cc, los, md, tests, state: state || 'occupied', patientId: null, fresh: false }));
+  const EMPTY_LABEL = { clean: '정리 완료', dirty: '청소 중' };
+  let pending = 0, unread = 0, open = true, threads = [];
+  let stages = null;                     // 환자별 직전 상태. 첫 목록은 기준선이라 이미 도착한 환자를 다시 넣지 않는다.
+  const choice = new Map();              // 환자별로 고른 침상(아직 배정 전)
+
+  const toPanel = (message) => frame.contentWindow?.postMessage({ source: 'quick119-emr-host', ...message }, location.origin);
+  const cleanBeds = () => beds.filter((b) => b.state === 'clean');
+  const bedOf = (patientId) => beds.find((b) => b.patientId === patientId) || null;
+  function note(text) { $('sync').textContent = text; $('sync').dataset.on = 'true'; }
+
+  function assign(thread) {
+    const bed = beds.find((b) => b.bed === (choice.get(thread.patientId) || cleanBeds()[0]?.bed) && b.state === 'clean');
+    if (!bed) { note('배정할 수 있는 빈 병상이 없습니다.'); return; }
+    Object.assign(bed, { state: 'reserved', patientId: thread.patientId, name: '도착 예정', cc: thread.title, tests: '퀵119 배정' });
+    choice.delete(thread.patientId);
+    // 배정한 침상을 패널이 구급대에 대화로 안내한다.
+    toPanel({ type: 'bed', patientId: thread.patientId, bed: bed.bed });
+    note(`${bed.bed}을(를) ${thread.title} 환자에게 배정하고, 패널에서 구급대에 안내했습니다.`);
+    render();
+  }
+  function admit(thread) {
+    const bed = bedOf(thread.patientId) || cleanBeds()[0];
+    if (!bed) { note(`${thread.title} 환자가 도착했지만 빈 병상이 없어 대기실로 접수합니다.`); return; }
+    Object.assign(bed, { state: 'occupied', patientId: thread.patientId, name: '퀵119 이송', age: thread.age == null ? '' : thread.age + '세', ktas: 0,
+      cc: thread.symptoms || thread.title, los: '방금', md: '배정 전', tests: '접수', fresh: true });
+    note(`패널에서 도착 확인한 ${thread.title} 환자를 ${bed.bed}에 넣었습니다.`);
+  }
+  function sync(next) {
+    const now = new Map(next.map((t) => [t.patientId, t.stage]));
+    if (stages) for (const t of next) if (t.stage === 'arrived' && stages.has(t.patientId) && stages.get(t.patientId) !== 'arrived') admit(t);
+    // 예약해 둔 환자가 더는 우리 병원으로 오지 않으면(목적지 변경·취소) 침상을 돌려놓는다.
+    for (const bed of beds) {
+      if (bed.state === 'reserved' && now.get(bed.patientId) !== 'confirmed' && now.get(bed.patientId) !== 'arrived') {
+        note(`${bed.bed} 배정을 해제했습니다. 환자가 더는 우리 병원으로 오지 않습니다.`);
+        Object.assign(bed, { state: 'clean', patientId: null, name: '', cc: '', tests: '' });
+      }
+    }
+    stages = now; threads = next;
+    render();
+  }
+
+  function renderBeds() {
+    $('rows').replaceChildren(...beds.map((bed) => {
+      const empty = bed.state === 'clean' || bed.state === 'dirty';
+      const cells = [bed.bed, bed.name, bed.age, bed.ktas, empty ? EMPTY_LABEL[bed.state] : bed.cc, bed.los, bed.md, bed.tests];
+      return el('tr', { 'data-bed': bed.state, 'data-fresh': String(bed.fresh), 'data-bed-id': bed.bed }, ...cells.map((value, index) => {
+        const cell = el('td', { class: index === 0 ? 'bed' : index === 7 ? 'small' : null });
+        if (index === 3) { if (value) cell.append(el('span', { class: 'ktas', 'data-k': String(value), text: String(value) })); else if (!empty && bed.state !== 'reserved') cell.textContent = '-'; }
+        else cell.textContent = value;
+        return cell;
+      }));
+    }));
+    $('tabBeds').textContent = `전체 병상 ${beds.length} · 빈 병상 ${cleanBeds().length}`;
+  }
+  function renderExpected() {
+    const list = threads.filter((t) => t.stage === 'accepted' || t.stage === 'confirmed');
+    $('tabExpected').textContent = `도착 예정 ${list.length}`; $('tabExpected').dataset.on = String(list.length > 0);
+    if (!list.length) { $('expected').replaceChildren(el('p', { class: 'expected-empty', text: '도착 예정 환자가 없습니다.' })); return; }
+    $('expected').replaceChildren(...list.map((t) => {
+      const bed = bedOf(t.patientId), free = cleanBeds();
+      const controls = [];
+      if (t.stage === 'accepted') controls.push(el('span', { text: '구급대 확정 대기' }));
+      else if (bed) controls.push(el('span', { class: 'exp-bed', text: `${bed.bed} 배정` }));
+      else {
+        const select = el('select', { 'aria-label': `${t.title} 환자에게 배정할 침상`, onchange: (event) => choice.set(t.patientId, event.target.value) },
+          ...free.map((b) => el('option', { value: b.bed, text: b.bed, selected: choice.get(t.patientId) === b.bed })));
+        controls.push(select, el('button', { type: 'button', class: 'go', 'data-assign': t.patientId, text: '배정하고 안내', disabled: !free.length || !t.canChat, onclick: () => assign(t) }));
+      }
+      controls.push(el('button', { type: 'button', 'data-open': t.patientId, text: '대화', onclick: () => { show(true); toPanel({ type: 'open', patientId: t.patientId }); } }));
+      return el('div', { class: 'exp', 'data-expected': t.patientId },
+        el('span', { class: 'sev', 'data-sev': t.severity, text: t.severityLabel }),
+        el('div', { class: 'exp-main' }, el('strong', { text: t.title }), el('span', { text: `${t.status}` })),
+        el('div', { class: 'exp-ctl' }, ...controls));
+    }));
+  }
+  let drawn = '';
+  function render() {
+    // 3초마다 오는 같은 목록으로 다시 그리지 않는다(침상 고르는 중인 선택 상자가 닫히지 않도록).
+    const next = JSON.stringify([beds, threads.filter((t) => t.stage === 'accepted' || t.stage === 'confirmed'), [...choice]]);
+    if (next !== drawn) { drawn = next; renderBeds(); renderExpected(); }
+    const total = pending + unread;
+    document.body.dataset.panel = open ? 'open' : 'closed';
+    $('collapse').setAttribute('aria-expanded', String(open));
+    $('dock').hidden = open; $('dock').setAttribute('aria-expanded', String(open));
+    $('badge').textContent = String(total); $('badge').dataset.on = String(total > 0);
+    $('dock').setAttribute('aria-label', `퀵119 수용 문의 패널 열기, 확인할 것 ${total}건`);
+    $('inbox').hidden = pending === 0; $('inbox').textContent = `답해야 하는 수용 문의 ${pending}건`;
+    $('toast').hidden = open || total === 0;
+    $('toastText').textContent = pending ? `답해야 하는 수용 문의 ${pending}건` : `구급대 새 메시지 ${unread}건`;
+    document.title = (total ? `(${total}) ` : '') + '가상 EMR 옆 채팅 패널 시연';
+  }
+  function show(next) { if (open === next) return; open = next; render(); (open ? $('collapse') : $('dock')).focus(); }
+  $('collapse').addEventListener('click', () => show(false));
+  $('dock').addEventListener('click', () => show(true));
+  $('toastOpen').addEventListener('click', () => show(true));
+  $('inbox').addEventListener('click', () => show(true));
+  // 같은 출처의 우리 iframe이 보낸 것만 받는다.
+  window.addEventListener('message', (event) => {
+    if (event.origin !== location.origin || event.source !== frame.contentWindow) return;
+    const data = event.data;
+    if (!data || data.source !== 'quick119-hospital-panel') return;
+    if (data.type === 'threads') {
+      if (data.hospital === hid && Array.isArray(data.threads)) sync(data.threads.filter((t) => t && typeof t.patientId === 'string' && typeof t.title === 'string'));
+      return;
+    }
+    if (!Number.isInteger(data.pending) || data.pending < 0) return;
+    pending = data.pending; unread = Number.isInteger(data.unread) && data.unread > 0 ? data.unread : 0;
+    render();
+  });
+  render();
+})();
+</script>
+</body>
+</html>

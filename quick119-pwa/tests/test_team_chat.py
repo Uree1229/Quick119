@@ -287,6 +287,10 @@ class LiveTeamChat(unittest.TestCase):
         self.assertEqual(panel.status_code, 200)
         self.assertIn('/static/hospital-memory.js', panel.text)
         self.assertIn('실제 환자정보 입력 금지', panel.text)
+        demo = self.http.get(self.api_url + '/hospital/emr-demo.html?hid=H01')
+        self.assertEqual(demo.status_code, 200)
+        self.assertIn('가상 EMR · 시연용 화면', demo.text)
+        self.assertIn('id="panelFrame"', demo.text)
         for asset in ('panel.css', 'panel.mjs', 'panel-state.mjs'):
             served = self.http.get(self.api_url + '/hospital/' + asset)
             self.assertEqual(served.status_code, 200, asset)
@@ -890,6 +894,16 @@ class LiveTeamChat(unittest.TestCase):
         staff.call('Page.navigate', url=self.api_url + f'/hospital/panel.html?hid={hospital}')
         thread = f'[data-thread="p:{pid}"]'
         wait(f"document.querySelector('{thread}') && document.querySelector('[data-action=accept]')")
+        # A narrow window opens on the conversation list, like a messenger; a row opens its chat and Back returns.
+        self.assertEqual(js("document.getElementById('panel').dataset.view"), 'list')
+        self.assertEqual(js("document.querySelector('[data-action=accept]').getBoundingClientRect().height"), 0)
+        self.assertEqual(js(f"document.querySelector('{thread} .qp-sev').textContent"), '미확인')
+        self.assertEqual(js(f"document.querySelector('{thread} .qp-unread').textContent"), '1')
+        click(thread)
+        wait("document.getElementById('panel').dataset.view === 'chat'")
+        js("document.getElementById('back').click()")
+        self.assertGreater(js(f"document.querySelector('{thread}').getBoundingClientRect().height"), 60)
+        click(thread)
         self.assertEqual(js("document.getElementById('handler').value"), '시연 담당자')
         self.assertIn('새 문의', js(f"document.querySelector('{thread}').textContent"))
         self.assertEqual(js("document.title"), '(1) 퀵119 수용 문의')
@@ -944,6 +958,81 @@ class LiveTeamChat(unittest.TestCase):
         declined = inquiry(other, other_iid)
         self.assertEqual((declined['state'], declined['reason']), ('DECLINED', '병상'))
         self.assertLessEqual(js("document.documentElement.scrollWidth"), 388)
+
+    def test_emr_demo_embeds_the_panel_and_shows_its_pending_count(self):
+        from chrome_driver import Chrome
+        desk = Chrome(Path('C:/Program Files/Google/Chrome/Application/chrome.exe'), self.run_dir / ('emr-profile-' + uuid4().hex))
+        self.addCleanup(desk.close)
+        desk.call('Page.enable')
+        desk.call('Emulation.setDeviceMetricsOverride', width=1280, height=800, deviceScaleFactor=1, mobile=False)
+
+        def js(code):
+            result = desk.call('Runtime.evaluate', expression=code, awaitPromise=True, returnByValue=True)
+            self.assertNotIn('exceptionDetails', result)
+            return result['result'].get('value')
+
+        def wait(condition):
+            end = time.monotonic() + 15
+            while time.monotonic() < end:
+                if js('Boolean(' + condition + ')'):
+                    return
+                time.sleep(.1)
+            self.fail(condition)
+
+        hospital = 'H09'  # Not asked by any other test in this class.
+        panel = "document.getElementById('panelFrame')?.contentDocument"
+        desk.call('Page.navigate', url=self.api_url + f'/hospital/emr-demo.html?hid={hospital}')
+        wait(f"{panel}?.getElementById('panel')?.dataset.conn === 'live'")
+        self.assertEqual(js("document.getElementById('panelFrame').getBoundingClientRect().width"), 619)
+        # Wide enough for the messenger layout: the list and the chat sit side by side inside the panel.
+        self.assertGreater(js(f"{panel}.getElementById('threads').getBoundingClientRect().width"), 200)
+        self.assertGreater(js(f"{panel}.querySelector('.qp-chat').getBoundingClientRect().width"), 350)
+        self.assertGreater(js("document.querySelectorAll('#rows tr').length"), 10)
+        self.assertLessEqual(js("document.documentElement.scrollWidth"), 1280)
+        self.assertTrue(js("document.getElementById('dock').hidden && document.getElementById('toast').hidden"))
+
+        pid = self.create_case()
+        self.call('POST', f'/api/patients/{pid}/inquiries', {'hospital_ids': [hospital]})
+        wait("document.getElementById('badge').textContent === '1'")
+        self.assertTrue(js("document.getElementById('toast').hidden"), 'no toast while the panel is open')
+        js("document.getElementById('collapse').click()")
+        wait("!document.getElementById('toast').hidden && !document.getElementById('dock').hidden")
+        self.assertEqual(js("getComputedStyle(document.getElementById('side')).display"), 'none')
+        self.assertIn('1건', js("document.getElementById('toastText').textContent"))
+        # A message from anywhere but the embedded panel is ignored.
+        js("window.postMessage({source: 'quick119-hospital-panel', pending: 9}, '*')")
+        time.sleep(.3)
+        self.assertEqual(js("document.getElementById('badge').textContent"), '1')
+        js("document.getElementById('toastOpen').click()")
+        wait("getComputedStyle(document.getElementById('side')).display !== 'none' && document.getElementById('toast').hidden")
+        wait(f"{panel}.querySelector('[data-action=accept]')")
+
+        # Data flows both ways. Panel -> EMR: an accepted patient shows up as expected, then lands in a bed on arrival.
+        # EMR -> panel: assigning a bed makes the panel tell the crew which bed to come to.
+        path = f'/api/patients/{pid}'
+        iid = self.call('GET', path)['inquiries'][0]['id']
+        js(f"{panel}.querySelector('[data-action=accept]').click()")
+        expected = f"document.querySelector('[data-expected=\"{pid}\"]')"
+        wait(f"{expected}?.textContent.includes('구급대 확정 대기')")
+        self.assertEqual(js("document.getElementById('tabExpected').textContent"), '도착 예정 1')
+        self.call('POST', path + '/confirm', {'inquiry_id': iid})
+        assign = f"document.querySelector('[data-assign=\"{pid}\"]')"
+        wait(f"{assign} && !{assign}.disabled")
+        free = js("document.querySelectorAll('#rows tr[data-bed=clean]').length")
+        js(f"{expected}.querySelector('select').value = 'C-04'; {expected}.querySelector('select').dispatchEvent(new Event('change')); {assign}.click()")
+        wait("document.querySelector('#rows tr[data-bed-id=\"C-04\"]').dataset.bed === 'reserved'")
+        self.assertEqual(js("document.querySelectorAll('#rows tr[data-bed=clean]').length"), free - 1)
+        deadline = time.monotonic() + 10
+        while '응급실 C-04 베드로 오세요.' not in [item.get('body') for item in self.call('GET', path + '/conversation')['items']]:
+            self.assertLess(time.monotonic(), deadline, 'the panel did not send the bed message')
+            time.sleep(.2)
+        wait(f"{expected}?.textContent.includes('C-04 배정')")
+        self.call('POST', path + '/depart', {})
+        self.call('POST', f'/api/hospitals/{hospital}/patients/{pid}/arrive', {'handled_by': '가상 의료진'})
+        wait("document.querySelector('#rows tr[data-bed-id=\"C-04\"]').dataset.fresh === 'true'")
+        self.assertIn('가상 테스트', js("document.querySelector('#rows tr[data-bed-id=\"C-04\"]').textContent"))
+        self.assertEqual(js("document.getElementById('tabExpected').textContent"), '도착 예정 0')
+        self.assertIsNone(js(f"{expected}"))
 
     def test_real_browser_staff_acceptance_and_chat(self):
         import base64

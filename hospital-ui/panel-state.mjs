@@ -6,8 +6,10 @@ export const RESOURCE = { ed_bed: '응급병상', special_team: '전문팀', ope
 // 서버(server/service.py DECLINE_REASONS)가 받는 값 그대로다.
 export const DECLINE_REASONS = ['인력', '장비', '병상', '진료 불가', '기타'];
 const CLOSED_LABEL = { CANCELLED: '구급대가 문의 종료', EXPIRED: '수용 응답 만료', CONFIRMED: '목적지 확정', DECLINED: '수용 불가 회신', ACCEPTED: '수용 응답 만료' };
-const RANK = { new: 0, checking: 1, confirmed: 2, accepted: 3, arrived: 4, declined: 5, closed: 5 };
+const FINISHED = new Set(['arrived', 'declined', 'closed']);
 export const MAX_CLOSED = 4;
+// 목록에서 쓰는 중증도 구분. 색만으로 구분하지 않도록 짧은 글자를 함께 보여 준다.
+export const SEVERITY = { urgent: '긴급', severe: '중증', moderate: '중등', mild: '경증', unknown: '미확인' };
 const VITAL_WORDS = { consciousness: { alert: '명료', impaired: '저하', unresponsive: '무반응' },
   breathing: { normal: '정상', abnormal: '비정상', absent: '없음' } };
 
@@ -43,18 +45,22 @@ export function buildThreads({ open = [], recent = [], incoming = [] } = {}, now
     byPatient.set(pid, { key: `p:${pid}`, patientId: pid, patient: q.patient || { id: pid }, inquiry: q,
       stage: inquiryStage(q, now), fromInquiry: true });
   }
-  const threads = [...byPatient.values()];
-  const priority = (t) => t.patient?.effective_priority ?? 0;
-  threads.sort((a, b) => {
-    if (RANK[a.stage] !== RANK[b.stage]) return RANK[a.stage] - RANK[b.stage];
-    if (a.stage === 'new' || a.stage === 'checking') {
-      return priority(b) - priority(a) || (a.inquiry.created_at - b.inquiry.created_at) || (a.inquiry.id - b.inquiry.id);
-    }
-    if (a.stage === 'confirmed') return (a.patient.eta_at ?? Infinity) - (b.patient.eta_at ?? Infinity) || a.patientId.localeCompare(b.patientId);
-    return (b.inquiry?.id ?? 0) - (a.inquiry?.id ?? 0) || a.patientId.localeCompare(b.patientId);
-  });
-  let closed = 0;
-  return threads.filter((t) => RANK[t.stage] < 4 || ++closed <= MAX_CLOSED);
+  // 순서는 언제나 먼저 온 순서다(문의가 들어온 시각, 같으면 문의 번호). 상태나 중증도로 순서를 바꾸지 않는다.
+  // 끝난 대화(도착 확인·수용 불가·종료)는 진행 중인 대화 아래에 최근 몇 건만 둔다.
+  const LAST = Number.MAX_SAFE_INTEGER;
+  const byArrival = (a, b) => (a.inquiry?.created_at ?? LAST) - (b.inquiry?.created_at ?? LAST)
+    || (a.inquiry?.id ?? LAST) - (b.inquiry?.id ?? LAST) || a.patientId.localeCompare(b.patientId);
+  const threads = [...byPatient.values()].sort(byArrival);
+  const finished = threads.filter((t) => FINISHED.has(t.stage)).slice(-MAX_CLOSED).map((t) => ({ ...t, finished: true }));
+  return [...threads.filter((t) => !FINISHED.has(t.stage)), ...finished];
+}
+
+export function severityKey(p) {
+  if (!p || p.priority_source === 'unknown' || p.effective_priority == null) return 'unknown';
+  if (p.effective_priority >= 4) return 'urgent';
+  if (p.effective_priority >= 3) return 'severe';
+  if (p.effective_priority >= 2) return 'moderate';
+  return 'mild';
 }
 
 function minutes(seconds) { return Math.max(1, Math.ceil(seconds / 60)); }
@@ -160,7 +166,7 @@ export function inquiryLog(q) {
   if (q.answer) log.push({ kind: 'crew', text: q.answer, id: `q:${q.id}:answer` });
   const notice = {
     CHECKING: q.question ? null : '확인 중으로 회신했습니다.',
-    ACCEPTED: '수용 가능으로 회신했습니다. 구급대의 목적지 확정을 기다립니다.',
+    ACCEPTED: '수용 가능으로 회신했습니다.',
     DECLINED: `수용 불가(${q.reason || '사유 없음'})로 회신했습니다.`,
     CANCELLED: '구급대가 이 문의를 종료했습니다.',
     EXPIRED: '수용 응답 유효시간이 지났습니다.',
@@ -183,4 +189,23 @@ export function chatLog(items) {
 
 export function actionCount(threads, now) {
   return threads.filter((t) => threadStatus(t, now).tone === 'alert').length;
+}
+
+// 목록 한 줄에 필요한 값: 안 읽은 구급대 메시지 수, 마지막 활동 시각, 미리 보기.
+// seenId는 이 화면에서 마지막으로 본 메시지 번호다. 내가 보낸 메시지는 세지 않는다.
+export function chatSummary(items, seenId = 0) {
+  let unread = 0, last = null, maxId = 0;
+  for (const item of items) {
+    if (item.kind !== 'message') continue;
+    maxId = Math.max(maxId, item.message_id ?? 0);
+    if (item.sender_role !== 'hospital' && (item.message_id ?? 0) > seenId) unread++;
+    if (!last || (item.message_id ?? 0) > (last.message_id ?? 0)) last = item;
+  }
+  return { unread, maxId, lastAt: last?.at ?? null,
+    preview: last ? (last.sender_role === 'hospital' ? '나: ' : '') + (last.body ?? last.text ?? '') : '' };
+}
+
+// 목록 배지 숫자: 답해야 하는 일(새 문의, 답변 도착, 상태 변경) 1건 + 안 읽은 구급대 메시지.
+export function threadBadge(thread, now, unread = 0) {
+  return unread + (threadStatus(thread, now).tone === 'alert' ? 1 : 0);
 }

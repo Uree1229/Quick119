@@ -71,7 +71,7 @@ def hospital(request: Request, asset: str = 'index.html'):
     if asset not in {'index.html', 'chat-recovery.mjs', 'inquiry-alerts.mjs', 'inquiry-layout.css',
                      'operations.mjs', 'review-discovery.mjs', 'workflow-panel.css',
                      'workflow-panel.mjs', 'workflow-state.mjs',
-                     'panel.html', 'panel.css', 'panel.mjs', 'panel-state.mjs'} or not (HOSPITAL_UI / asset).is_file():
+                     'panel.html', 'panel.css', 'panel.mjs', 'panel-state.mjs', 'emr-demo.html'} or not (HOSPITAL_UI / asset).is_file():
         raise HTTPException(404)
     # Keep the repository source untouched. Every original storage reference uses a
     # per-page RAM adapter, including ChatRecoveryStore's read-back verification.
