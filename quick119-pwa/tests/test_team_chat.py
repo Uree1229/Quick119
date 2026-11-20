@@ -283,6 +283,15 @@ class LiveTeamChat(unittest.TestCase):
         self.assertEqual(hospital.headers['cache-control'], 'no-store')
         self.assertIn("connect-src 'self'", hospital.headers['content-security-policy'])
         self.assertEqual(self.http.get(self.api_url + '/hospital/chat-recovery.mjs').status_code, 200)
+        panel = self.http.get(self.api_url + '/hospital/panel.html?hid=H01')
+        self.assertEqual(panel.status_code, 200)
+        self.assertIn('/static/hospital-memory.js', panel.text)
+        self.assertIn('실제 환자정보 입력 금지', panel.text)
+        for asset in ('panel.css', 'panel.mjs', 'panel-state.mjs'):
+            served = self.http.get(self.api_url + '/hospital/' + asset)
+            self.assertEqual(served.status_code, 200, asset)
+            self.assertNotIn('localStorage', served.text)
+            self.assertEqual(served.headers['cache-control'], 'no-store')
 
     def test_patient_list_numbers_details_and_confirmed_delete(self):
         first = self.create_case()
@@ -841,6 +850,100 @@ class LiveTeamChat(unittest.TestCase):
               connection: document.getElementById('transport-workspace').dataset.connection});
         })()""")
         self.assertTrue(json.loads(tray_state)['visible'], tray_state)
+
+    def test_hospital_panel_answers_inquiries_and_chats_in_a_narrow_window(self):
+        from chrome_driver import Chrome
+        staff = Chrome(Path('C:/Program Files/Google/Chrome/Application/chrome.exe'), self.run_dir / ('panel-profile-' + uuid4().hex))
+        self.addCleanup(staff.close)
+        staff.call('Page.enable')
+        # The width of a browser side window docked beside the hospital's own system.
+        staff.call('Emulation.setDeviceMetricsOverride', width=388, height=760, deviceScaleFactor=1, mobile=False)
+
+        def js(code):
+            result = staff.call('Runtime.evaluate', expression=code, awaitPromise=True, returnByValue=True)
+            self.assertNotIn('exceptionDetails', result)
+            return result['result'].get('value')
+
+        def wait(condition):
+            end = time.monotonic() + 15
+            while time.monotonic() < end:
+                if js('Boolean(' + condition + ')'):
+                    return
+                time.sleep(.1)
+            self.fail(condition)
+
+        def click(selector):
+            wait(f"document.querySelector({json.dumps(selector)}) && !document.querySelector({json.dumps(selector)}).disabled")
+            js(f"document.querySelector({json.dumps(selector)}).click()")
+
+        def say(text):
+            wait("!document.getElementById('composer').hidden && !document.getElementById('message').disabled")
+            js(f"document.getElementById('message').value = {json.dumps(text)}; document.getElementById('composer').requestSubmit()")
+
+        def inquiry(pid, iid):
+            return next(q for q in self.call('GET', f'/api/patients/{pid}')['inquiries'] if q['id'] == iid)
+
+        hospital = 'H07'  # A hospital no other test in this class asks, so its lists start empty.
+        pid = self.create_case()
+        path = f'/api/patients/{pid}'
+        iid = self.call('POST', path + '/inquiries', {'hospital_ids': [hospital]})['inquiries'][0]['id']
+        staff.call('Page.navigate', url=self.api_url + f'/hospital/panel.html?hid={hospital}')
+        thread = f'[data-thread="p:{pid}"]'
+        wait(f"document.querySelector('{thread}') && document.querySelector('[data-action=accept]')")
+        self.assertEqual(js("document.getElementById('handler').value"), '시연 담당자')
+        self.assertIn('새 문의', js(f"document.querySelector('{thread}').textContent"))
+        self.assertEqual(js("document.title"), '(1) 퀵119 수용 문의')
+        self.assertIn('가상 테스트', js("document.querySelector('.qp-card').textContent"))
+        # Everything needed to answer fits the narrow window: no sideways scroll, reply buttons and the warning in view.
+        self.assertLessEqual(js("document.documentElement.scrollWidth"), 388)
+        for selector in ('[data-action=accept]', '[data-action=checking]', '[data-action=decline]', '.qp-synthetic'):
+            box = js(f"(() => {{ const r = document.querySelector('{selector}').getBoundingClientRect(); return [r.bottom, r.height]; }})()")
+            self.assertLessEqual(box[0], 760, selector)
+            if selector.startswith('['):
+                self.assertGreaterEqual(box[1], 44, selector)
+
+        say('항응고제를 복용 중인가요?')
+        wait("document.querySelector('.qp-msg[data-kind=me]')")
+        self.assertEqual(inquiry(pid, iid)['question'], '항응고제를 복용 중인가요?')
+        self.call('POST', path + f'/inquiries/{iid}/answer', {'answer': '복용하지 않습니다.'}, direct=True)
+        wait("document.querySelector('.qp-msg[data-kind=crew]')?.textContent.includes('복용하지 않습니다.')")
+        self.assertIn('답변 도착', js(f"document.querySelector('{thread}').textContent"))
+
+        click('[data-action=accept]')
+        wait("document.querySelector('.qp-done')?.textContent.includes('목적지 확정을 기다리는 중')")
+        self.assertEqual(inquiry(pid, iid)['state'], 'ACCEPTED')
+        self.assertEqual(inquiry(pid, iid)['handled_by'], '시연 담당자')
+        self.assertEqual(js("document.title"), '퀵119 수용 문의')
+
+        self.call('POST', path + '/confirm', {'inquiry_id': iid})
+        wait("document.querySelector('[data-action=arrive]') && !document.getElementById('composer').hidden")
+        sid = self.call('GET', path + '/conversation')['active_hospital_session']['id']
+        self.call('POST', path + '/messages', {'body': '가상 대원: 5분 뒤 도착합니다.', 'client_message_id': uuid4().hex, 'hospital_session_id': sid})
+        wait("[...document.querySelectorAll('.qp-msg[data-kind=crew]')].some(n => n.textContent.includes('5분 뒤 도착합니다.'))")
+        say('응급실 2번 베드로 오세요.')
+        wait("[...document.querySelectorAll('.qp-msg[data-kind=me]')].some(n => n.textContent.includes('2번 베드로'))")
+        room = self.call('GET', path + '/conversation')
+        self.assertIn('응급실 2번 베드로 오세요.', [item.get('body') for item in room['items']])
+        self.assertEqual(js("document.getElementById('message').value"), '')
+
+        self.call('POST', path + '/depart', {})
+        click('[data-action=arrive]')
+        wait("document.querySelector('.qp-done')?.textContent.includes('환자 도착을 확인했습니다')")
+        self.assertEqual(self.call('GET', path)['state'], 'ARRIVED')
+
+        # A second patient is declined with a reason; the send button stays off until one is picked.
+        other = self.create_case()
+        other_iid = self.call('POST', f'/api/patients/{other}/inquiries', {'hospital_ids': [hospital]})['inquiries'][0]['id']
+        click(f'[data-thread="p:{other}"]')
+        click('[data-action=decline]')
+        wait("document.getElementById('declineSend')")
+        self.assertTrue(js("document.getElementById('declineSend').disabled"))
+        js("[...document.querySelectorAll('.qp-reasons button')].find(b => b.textContent === '병상').click()")
+        click('#declineSend')
+        wait("document.querySelector('.qp-done')?.textContent.includes('수용 불가로 회신했습니다')")
+        declined = inquiry(other, other_iid)
+        self.assertEqual((declined['state'], declined['reason']), ('DECLINED', '병상'))
+        self.assertLessEqual(js("document.documentElement.scrollWidth"), 388)
 
     def test_real_browser_staff_acceptance_and_chat(self):
         import base64

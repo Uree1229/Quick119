@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>퀵119 수용 문의</title>
+<link rel="stylesheet" href="panel.css">
+</head>
+<body>
+<!-- 병원이 쓰던 화면(EMR 등) 옆에 좁은 창·사이드패널·iframe으로 띄우는 채팅형 패널.
+     수용 문의 회신과 이송 대화만 다루고, 자원·수용 제한·운영 도구는 전체 병원 웹(index.html)에 둔다. -->
+<main id="panel" class="qp" data-conn="pending">
+  <header class="qp-head">
+    <span class="qp-badge" aria-hidden="true">+</span>
+    <div class="qp-head-main">
+      <h1>퀵119 수용 문의</h1>
+      <p id="who">병원 정보를 불러오는 중</p>
+    </div>
+    <span id="conn" class="qp-conn" role="status">연결 중</span>
+    <button type="button" id="settingsToggle" class="qp-icon" aria-expanded="false" aria-controls="settings" aria-label="병원, 담당자, 알림 설정">
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+    </button>
+  </header>
+  <section id="settings" class="qp-settings" aria-label="설정" hidden>
+    <label for="hospital">병원</label>
+    <select id="hospital"></select>
+    <label for="handler">담당자 이름</label>
+    <input id="handler" type="text" maxlength="40" autocomplete="off" placeholder="회신에 남길 이름">
+    <div class="qp-settings-row">
+      <button type="button" id="notifyToggle" class="qp-chip">브라우저 알림 켜기</button>
+      <button type="button" id="soundToggle" class="qp-chip" aria-pressed="false">알림음 켜기</button>
+    </div>
+    <a id="fullLink" href="./">전체 병원 웹 열기 · 자원, 수용 제한, 운영 도구</a>
+  </section>
+  <p id="error" class="qp-error" role="alert" hidden></p>
+  <nav id="threads" class="qp-threads" aria-label="환자 대화 목록"></nav>
+  <p id="banner" class="qp-banner" role="status" hidden></p>
+  <section id="log" class="qp-log" role="log" aria-label="선택한 환자와의 대화" tabindex="0"><div id="logInner" class="qp-log-inner"></div></section>
+  <footer class="qp-dock">
+    <div id="actions" class="qp-actions"></div>
+    <form id="composer" class="qp-composer" hidden>
+      <label class="qp-sr" for="message" id="messageLabel">구급대에 보낼 내용</label>
+      <input id="message" type="text" maxlength="1000" autocomplete="off">
+      <button type="submit" id="send" class="qp-send">보내기</button>
+    </form>
+    <p class="qp-synthetic">가상 환자·병원 전용 · 실제 환자정보 입력 금지</p>
+  </footer>
+</main>
+<script type="module" src="panel.mjs"></script>
+</body>
+</html>

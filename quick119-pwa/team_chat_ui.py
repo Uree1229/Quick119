@@ -70,13 +70,15 @@ def hospital(request: Request, asset: str = 'index.html'):
     local_only(request)
     if asset not in {'index.html', 'chat-recovery.mjs', 'inquiry-alerts.mjs', 'inquiry-layout.css',
                      'operations.mjs', 'review-discovery.mjs', 'workflow-panel.css',
-                     'workflow-panel.mjs', 'workflow-state.mjs'} or not (HOSPITAL_UI / asset).is_file():
+                     'workflow-panel.mjs', 'workflow-state.mjs',
+                     'panel.html', 'panel.css', 'panel.mjs', 'panel-state.mjs'} or not (HOSPITAL_UI / asset).is_file():
         raise HTTPException(404)
     # Keep the repository source untouched. Every original storage reference uses a
     # per-page RAM adapter, including ChatRecoveryStore's read-back verification.
     text = (HOSPITAL_UI / asset).read_text(encoding='utf-8').replace('localStorage', 'quick119MemoryStorage')
-    if asset == 'index.html':
+    if asset.endswith('.html'):
         text = text.replace('<head>', '<head><script src="/static/hospital-memory.js?v=2"></script>')
+    if asset == 'index.html':
         text = text.replace("params.get('server') ||", '')
         text = text.replace("serverBase = $('server').value.trim().replace(/\\/$/, '');", "serverBase = location.origin;")
         text = text.replace("$('server').value = serverBase;", "$('server').value = serverBase; $('server').readOnly = true;")

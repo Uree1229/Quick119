@@ -1,0 +1,115 @@
+// 병원 채팅 패널(hospital-ui/panel.html)의 상태 계산 검사. 화면과 통신은 quick119-pwa의 실서버 브라우저 검사에서 본다.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {buildThreads,threadStatus,summaryFields,acceptBlock,inquiryLog,chatLog,actionCount,inquiryStage,needsReview,
+  etaLabel,patientTitle,DECLINE_REASONS,MAX_CLOSED} from '../../hospital-ui/panel-state.mjs';
+
+const NOW=1000;
+const patient=(id,extra={})=>({id,age:60,symptoms:'흉통',priority_source:'expert',effective_priority:2,resource_demands:{ed_bed:1},
+  required_capabilities:[],danger_signs:[],consciousness:null,breathing:null,state:'WAITING',eta_at:null,...extra});
+const inquiry=(id,state,extra={},p={})=>({id,state,version:1,created_at:NOW-30,expires_at:null,question:null,answer:null,reason:null,overdue:false,
+  patient:patient(`P${id}`,p),...extra});
+const stages=threads=>threads.map(t=>`${t.patientId}:${t.stage}`);
+
+test('환자 한 명이 대화 하나이고, 답해야 하는 문의가 앞에 온다',()=>{
+  const threads=buildThreads({
+    open:[inquiry(2,'CHECKING'),inquiry(1,'PENDING'),inquiry(3,'PENDING',{}, {effective_priority:4})],
+    recent:[inquiry(4,'ACCEPTED',{expires_at:NOW+600}),inquiry(5,'DECLINED',{reason:'병상'})],
+    incoming:[patient('P9',{state:'IN_TRANSIT',eta_at:NOW+240})],
+  },NOW);
+  assert.deepEqual(stages(threads),['P3:new','P1:new','P2:checking','P9:confirmed','P4:accepted','P5:declined']);
+  assert.equal(actionCount(threads,NOW),2,'새 문의 두 건만 답해야 하는 건수로 센다');
+});
+
+test('우리 병원으로 확정된 환자는 문의 기록보다 우선하고 한 번만 나온다',()=>{
+  const confirmed=patient('P1',{state:'CONFIRMED'});
+  const threads=buildThreads({recent:[{...inquiry(1,'CONFIRMED'),patient:patient('P1')}],incoming:[confirmed]},NOW);
+  assert.deepEqual(stages(threads),['P1:confirmed']);
+  assert.equal(threads[0].inquiry.id,1,'확정 전 문의는 요약 카드용으로 붙여 둔다');
+  const arrived=buildThreads({incoming:[patient('P2',{state:'ARRIVED'})]},NOW);
+  assert.equal(arrived[0].stage,'arrived');
+});
+
+test('같은 환자의 문의가 여러 건이면 최신 문의만 쓰고, 끝난 대화는 몇 건만 남긴다',()=>{
+  const same=buildThreads({open:[{...inquiry(7,'PENDING'),patient:patient('PX')}],recent:[{...inquiry(3,'CANCELLED'),patient:patient('PX')}]},NOW);
+  assert.deepEqual(stages(same),['PX:new']);
+  const many=buildThreads({recent:Array.from({length:9},(_,i)=>inquiry(i+1,'DECLINED',{reason:'기타'}))},NOW);
+  assert.equal(many.length,MAX_CLOSED);
+  assert.equal(many[0].inquiry.id,9,'최근에 끝난 대화부터');
+});
+
+test('수용 응답 유효시간이 지나면 확정 대기가 아니라 종료로 본다',()=>{
+  assert.equal(inquiryStage(inquiry(1,'ACCEPTED',{expires_at:NOW+1}),NOW),'accepted');
+  assert.equal(inquiryStage(inquiry(1,'ACCEPTED',{expires_at:NOW}),NOW),'closed');
+  assert.equal(threadStatus({stage:'closed',inquiry:inquiry(1,'ACCEPTED',{expires_at:NOW}),patient:patient('P1')},NOW).text,'수용 응답 만료');
+});
+
+test('상태 문구: 경과 시간, 답변 도착, 도착 예정, 상태 변경',()=>{
+  const status=(stage,q,p=patient('P1'))=>threadStatus({stage,inquiry:q,patient:p},NOW);
+  assert.deepEqual(status('new',inquiry(1,'PENDING')),{text:'새 문의',tone:'alert'});
+  assert.equal(status('new',inquiry(1,'PENDING',{created_at:NOW-200})).text,'새 문의 · 3분 경과');
+  assert.equal(status('new',inquiry(1,'PENDING',{overdue:true})).text,'새 문의 · 응답 지연');
+  assert.deepEqual(status('checking',inquiry(1,'CHECKING',{question:'복용약?'})),{text:'구급대 답변 대기',tone:'wait'});
+  assert.deepEqual(status('checking',inquiry(1,'CHECKING',{question:'복용약?',answer:'없음'})),{text:'답변 도착 · 회신 필요',tone:'alert'});
+  assert.equal(status('confirmed',null,patient('P1',{state:'IN_TRANSIT',eta_at:NOW+250})).text,'우리 병원 확정 · 5분 뒤 도착');
+  assert.equal(status('confirmed',null,patient('P1',{state:'CONFIRMED'})).text,'우리 병원 확정 · 출발 전');
+  const review={enabled:true,risk_signature:'b',acknowledged_signature:'a'};
+  assert.deepEqual(status('confirmed',null,patient('P1',{state:'IN_TRANSIT',transport_review:review})),{text:'상태 변경 · 확인 필요',tone:'alert'});
+  assert.equal(needsReview(patient('P1',{transport_review:{...review,acknowledged_signature:'b'}})),false);
+  assert.equal(status('confirmed',null,patient('P1',{state:'IN_TRANSIT',needs_adjustment:true})).text,'수용 취소 요청함');
+  assert.equal(etaLabel(patient('P1',{state:'IN_TRANSIT',eta_at:NOW-5}),NOW),'곧 도착');
+  assert.equal(etaLabel(patient('P1',{state:'IN_TRANSIT',eta_at:NOW+511*60}),NOW),'8시간 31분 뒤 도착');
+  assert.equal(patientTitle({age:null,symptoms:''}),'나이 미확인 · 증상 미입력');
+});
+
+test('요약 카드는 있는 정보만 보여 주고 우리 병원 여유를 함께 표시한다',()=>{
+  const hospital={resources:[{resource_type:'ed_bed',status:'available',free:3,stale:false}],restrictions:[]};
+  const fields=summaryFields(patient('P1',{consciousness:'alert',breathing:'unknown',danger_signs:['호흡곤란'],required_capabilities:['응급의학']}),hospital);
+  assert.deepEqual(fields.map(f=>f.label),['의식','위험 징후','필요 진료','필요 자원','우리 병원 여유']);
+  assert.deepEqual(fields.at(-1),{label:'우리 병원 여유',value:'응급병상 3',tone:'ok'});
+  assert.deepEqual(summaryFields(patient('P1',{resource_demands:{}}),hospital),[],'없는 항목은 만들지 않는다');
+  const short={resources:[{resource_type:'ed_bed',status:'available',free:0}]};
+  assert.equal(summaryFields(patient('P1'),short).at(-1).tone,'alert');
+  assert.equal(summaryFields(patient('P1'),{resources:[]}).at(-1).value,'응급병상 미확인');
+});
+
+test('수용 제한 중이거나 서버 기준 여유가 모자라면 수용 가능을 막는다',()=>{
+  const ok={resources:[{resource_type:'ed_bed',status:'available',free:1}],restrictions:[]};
+  assert.equal(acceptBlock(patient('P1'),ok,NOW),null);
+  assert.match(acceptBlock(patient('P1'),{...ok,resources:[{resource_type:'ed_bed',status:'available',free:0}]},NOW),/응급병상 여유/);
+  const restricted={...ok,restrictions:[{scope:'all',reason:'병상 포화',status:'active',cleared_at:null,ends_at:null,starts_at:null}]};
+  assert.match(acceptBlock(patient('P1'),restricted,NOW),/수용 제한 중\(기관 전체 · 병상 포화\)/);
+  const cleared={...ok,restrictions:[{scope:'all',reason:'병상 포화',status:'active',cleared_at:NOW-1}]};
+  assert.equal(acceptBlock(patient('P1'),cleared,NOW),null);
+  const other={...ok,restrictions:[{scope:'소아청소년과',reason:'전문의 부재',status:'active',cleared_at:null}]};
+  assert.equal(acceptBlock(patient('P1'),other,NOW),null,'이 환자에게 필요 없는 진료 분야의 제한은 막지 않는다');
+  assert.equal(acceptBlock(patient('P1'),null,NOW),null);
+});
+
+test('확정 전 대화는 질문·답변과 회신 상태로, 확정 후 대화는 서버 순서대로 편다',()=>{
+  assert.deepEqual(inquiryLog(inquiry(1,'PENDING')),[]);
+  assert.deepEqual(inquiryLog(inquiry(1,'CHECKING',{question:'복용약?',answer:'없음'})).map(e=>e.kind),['me','crew']);
+  assert.deepEqual(inquiryLog(inquiry(1,'CHECKING')).map(e=>e.text),['확인 중으로 회신했습니다.']);
+  assert.match(inquiryLog(inquiry(1,'DECLINED',{reason:'병상'})).at(-1).text,/수용 불가\(병상\)/);
+  const log=chatLog([
+    {id:'message:2',kind:'message',sender_role:'hospital',sender_name:'의료진',body:'2번 베드로',at:12,order_key:[5,1,2]},
+    {id:'event:5',kind:'system',text:'목적지가 확정됐습니다.',at:10,order_key:[5,0,5]},
+    {id:'message:1',kind:'message',sender_role:'patient',sender_name:'구급대원',body:'출발합니다',at:11,order_key:[5,1,1]},
+  ]);
+  assert.deepEqual(log.map(e=>[e.kind,e.text]),[['notice','목적지가 확정됐습니다.'],['crew','출발합니다'],['me','2번 베드로']]);
+});
+
+test('불가 사유는 서버가 받는 값과 같고, 패널은 서버 문구를 마크업으로 쓰지 않는다',()=>{
+  const service=readFileSync(new URL('../../server/service.py',import.meta.url),'utf8');
+  const accepted=service.match(/DECLINE_REASONS = \{([^}]*)\}/)[1].split(',').map(s=>s.trim().replace(/'/g,'')).sort();
+  assert.deepEqual([...DECLINE_REASONS].sort(),accepted);
+  const panel=readFileSync(new URL('../../hospital-ui/panel.mjs',import.meta.url),'utf8');
+  assert.equal(/innerHTML|insertAdjacentHTML|document\.write/.test(panel),false);
+});
+
+test('의식·호흡 코드값은 한글로 보여 주고, 나쁜 상태는 눈에 띄게 한다',()=>{
+  const fields=summaryFields(patient('P1',{consciousness:'impaired',breathing:'normal',resource_demands:{}}),null);
+  assert.deepEqual(fields,[{label:'의식',value:'저하',tone:'alert'},{label:'호흡',value:'정상'}]);
+  assert.deepEqual(summaryFields(patient('P1',{consciousness:'unknown',breathing:'unknown',resource_demands:{}}),null),[]);
+});

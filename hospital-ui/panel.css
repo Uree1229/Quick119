@@ -1,0 +1,112 @@
+/* 퀵119 병원 채팅 패널. 360~440px 폭의 좁은 창·사이드패널·iframe을 기준으로 하고, 넓은 창에서는 가운데 한 열로 둔다. */
+:root{--navy:#17375e;--navy-soft:#edf3fb;--red:#e5484d;--red-ink:#a3262b;--red-soft:#fdeeee;--green:#1f6f4a;--green-soft:#e5f5ed;--green-ink:#145a3c;
+  --amber-ink:#7a4a06;--amber-soft:#fff4de;--ink:#15253b;--muted:#4a5a70;--line:#dce3ed;--soft:#f5f7fb;--crew:#24569b;
+  font-family:"Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif;color:var(--ink);background:#e9edf2}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+button,input,select{font:inherit}
+button{cursor:pointer}
+button:disabled{cursor:not-allowed}
+:is(button,a,input,select,[tabindex]):focus-visible{outline:3px solid #3486e4;outline-offset:2px}
+[hidden]{display:none!important}
+.qp-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.qp{display:flex;flex-direction:column;height:100vh;height:100dvh;max-width:480px;margin:0 auto;background:var(--soft);font-size:14px;line-height:1.45;box-shadow:0 0 28px rgb(13 37 67 / .14)}
+
+/* 헤더 */
+.qp-head{display:flex;align-items:center;gap:10px;flex:none;min-height:56px;padding:6px 8px 6px 14px;background:var(--navy);color:#fff}
+.qp-badge{display:grid;place-items:center;flex:none;width:28px;height:28px;border-radius:8px;background:var(--red);font-weight:900;font-size:22px;line-height:1}
+.qp-head-main{flex:1;min-width:0}
+.qp-head h1{margin:0;font-size:15px;font-weight:900;letter-spacing:-.3px}
+.qp-head p{margin:0;font-size:11.5px;color:#c9d6e6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qp-conn{display:inline-flex;align-items:center;gap:5px;flex:none;font-size:11.5px;color:#c9d6e6}
+.qp-conn::before{content:"";width:8px;height:8px;border-radius:50%;background:#e2a33a}
+[data-conn=live] .qp-conn::before{background:#3ddc97}
+[data-conn=error] .qp-conn::before{background:#ff8a8e}
+.qp-icon{display:grid;place-items:center;flex:none;width:44px;height:44px;border:0;border-radius:10px;background:transparent;color:#fff}
+.qp-icon[aria-expanded=true]{background:#24507f}
+
+/* 설정 */
+.qp-settings{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:8px 10px;flex:none;padding:12px 14px;background:#fff;border-bottom:1px solid var(--line);font-size:13px}
+.qp-settings label{font-weight:700;color:var(--muted)}
+.qp-settings :is(select,input){min-height:44px;padding:0 10px;border:1px solid #c6d3e1;border-radius:10px;background:#fff;color:var(--ink);font-size:15px}
+.qp-settings-row{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px}
+.qp-settings a{grid-column:1/-1;color:var(--navy);font-weight:700}
+.qp-chip{min-height:44px;padding:0 14px;border:1px solid #c9d6e4;border-radius:22px;background:#fff;color:var(--navy);font-size:13px;font-weight:700}
+.qp-chip[aria-pressed=true]{border:2px solid var(--navy);background:var(--navy-soft)}
+
+.qp-error{flex:none;margin:0;padding:9px 14px;background:var(--red-soft);color:var(--red-ink);border-bottom:1px solid #f5c7c9;font-size:13px;font-weight:700}
+
+/* 환자 대화 목록 */
+.qp-threads{display:flex;gap:6px;flex:none;padding:8px 10px;background:#fff;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+.qp-threads::-webkit-scrollbar{display:none}
+.qp-threads:empty{display:none}
+.qp-thread{flex:none;display:flex;flex-direction:column;align-items:flex-start;gap:1px;max-width:230px;min-height:48px;padding:5px 12px;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);text-align:left}
+.qp-thread[aria-pressed=true]{padding:4px 11px;border:2px solid var(--navy);background:var(--navy-soft)}
+.qp-thread strong{max-width:100%;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qp-thread span{max-width:100%;font-size:11.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+[data-tone=alert]{color:var(--red-ink)}
+[data-tone=wait]{color:var(--amber-ink)}
+[data-tone=ok]{color:var(--green-ink)}
+[data-tone=muted]{color:var(--muted)}
+
+.qp-banner{flex:none;margin:0;padding:8px 14px;border-bottom:1px solid #bfe2cf;background:var(--green-soft);color:var(--green-ink);font-size:13px;font-weight:700}
+.qp-banner[data-tone=alert]{border-color:#f5c7c9;background:var(--red-soft);color:var(--red-ink)}
+.qp-banner[data-tone=wait]{border-color:#f0dcb4;background:var(--amber-soft);color:var(--amber-ink)}
+
+/* 대화: column-reverse라 새 내용이 생겨도 맨 아래가 보인다 */
+.qp-log{flex:1;min-height:0;display:flex;flex-direction:column-reverse;padding:12px;overflow-y:auto;overscroll-behavior:contain}
+.qp-log-inner{display:flex;flex-direction:column;gap:10px}
+.qp-empty{margin:auto;padding:24px 16px;color:var(--muted);text-align:center}
+.qp-empty strong{display:block;margin-bottom:4px;color:var(--navy);font-size:16px}
+.qp-card{padding:14px;border:1px solid #c9d6e6;border-radius:16px;background:#fff;box-shadow:0 2px 8px rgb(23 55 94 / .06)}
+.qp-card-src{font-size:11.5px;font-weight:700;color:var(--red-ink)}
+.qp-card-head{display:flex;align-items:baseline;gap:8px;margin-top:2px}
+.qp-card-head strong{flex:1;min-width:0;font-size:19px;font-weight:900;letter-spacing:-.5px;overflow-wrap:anywhere}
+.qp-card-head span{flex:none;padding:1px 9px;border-radius:10px;background:#eef1f5;font-size:12px;font-weight:700;color:var(--muted)}
+.qp-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:10px}
+.qp-fields:empty{display:none}
+.qp-field{padding:8px 10px;border-radius:10px;background:var(--soft)}
+.qp-field dt{font-size:11px;color:var(--muted)}
+.qp-field dd{margin:0;font-size:13px;font-weight:700;overflow-wrap:anywhere}
+.qp-field[data-tone=ok]{background:var(--green-soft)}
+.qp-field[data-tone=alert]{background:var(--red-soft)}
+.qp-field[data-tone=wait]{background:var(--amber-soft)}
+.qp-notice{align-self:center;max-width:92%;padding:4px 12px;border-radius:12px;background:#e3eaf3;color:#3f546c;font-size:12px;font-weight:700;text-align:center;overflow-wrap:anywhere}
+.qp-msg{max-width:84%;display:flex;flex-direction:column;gap:2px}
+.qp-msg p{margin:0;padding:9px 12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.qp-msg small{font-size:11px;color:var(--muted)}
+.qp-msg[data-kind=crew]{align-self:flex-start}
+.qp-msg[data-kind=crew] p{border:1px solid var(--line);border-radius:4px 16px 16px 16px;background:#fff}
+.qp-msg[data-kind=me]{align-self:flex-end;align-items:flex-end}
+.qp-msg[data-kind=me] p{border-radius:16px 4px 16px 16px;background:var(--crew);color:#fff}
+
+/* 하단: 회신 버튼, 입력창 */
+.qp-dock{flex:none;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid var(--line)}
+.qp-actions:empty{display:none}
+.qp-reply{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:8px}
+.qp-btn{min-height:52px;padding:0 12px;border:2px solid var(--navy);border-radius:14px;background:#fff;color:var(--navy);font-size:15px;font-weight:700}
+.qp-btn:disabled{opacity:.5}
+.qp-btn-accept{border-color:var(--green);background:var(--green);color:#fff;font-size:16px;font-weight:900}
+.qp-btn-decline{border-color:var(--red-ink);color:var(--red-ink)}
+.qp-btn-primary{border-color:var(--navy);background:var(--navy);color:#fff;font-size:16px;font-weight:900}
+.qp-btn-danger{border-color:var(--red-ink);background:var(--red-ink);color:#fff;font-weight:900}
+.qp-btn-plain{border:1px solid #c9d6e4;color:var(--ink)}
+.qp-row{display:flex;gap:8px}
+.qp-row .qp-grow{flex:1}
+.qp-note{margin:8px 0 0;font-size:12.5px;color:var(--muted)}
+.qp-note[data-tone=alert]{color:var(--red-ink);font-weight:700}
+.qp-form{padding:12px;border:2px solid var(--red-ink);border-radius:14px}
+.qp-form h2{margin:0 0 8px;font-size:13px;color:var(--red-ink)}
+.qp-reasons{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.qp-reasons .qp-chip[aria-pressed=true]{border-color:var(--red-ink);background:var(--red-soft);color:#8e1f24}
+.qp-form input{width:100%;min-height:46px;margin-bottom:12px;padding:0 12px;border:1px solid #c6d3e1;border-radius:12px;font-size:15px}
+.qp-done{padding:14px;border-radius:14px;background:#eef1f5;color:#3f546c;font-weight:700;text-align:center}
+.qp-done[data-tone=wait]{background:var(--navy-soft);color:var(--navy)}
+.qp-composer{display:flex;align-items:center;gap:8px;margin-top:10px}
+.qp-actions:empty+.qp-composer{margin-top:0}
+.qp-composer input{flex:1;min-width:0;height:46px;padding:0 14px;border:1px solid #c9d6e4;border-radius:23px;background:var(--soft);color:var(--ink);font-size:15px}
+.qp-composer input:focus{outline:none;border-color:var(--navy);background:#fff;box-shadow:0 0 0 3px rgb(23 55 94 / .2)}
+.qp-send{flex:none;height:46px;padding:0 16px;border:0;border-radius:23px;background:var(--navy);color:#fff;font-weight:700}
+.qp-send:disabled{background:#8a97a6}
+.qp-synthetic{margin:8px 0 0;font-size:11.5px;font-weight:700;color:var(--red-ink);text-align:center}
+@media(max-width:340px){.qp-reply{grid-template-columns:1fr 1fr}.qp-reply .qp-btn-accept{grid-column:1/-1}}
