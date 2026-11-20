@@ -508,6 +508,32 @@ def _(ctx, pid):
                 workflow=transport_reassignment.view(ctx.conn, ctx.now, pid))
 
 
+@route('GET', r'/api/hospitals/(?P<hid>[\w-]+)/patients/(?P<pid>[\w-]+)/transport-location')
+def hospital_transport_location(ctx, hid, pid):
+    from .travel import synthetic_estimate
+
+    with db.transaction(ctx.conn):
+        patient = service._patient(ctx.conn, pid)
+        hospital = service._hospital(ctx.conn, hid)
+        session = ctx.conn.execute(
+            "SELECT 1 FROM conversations c JOIN conversation_hospital_sessions s ON s.conversation_id=c.id "
+            "WHERE c.patient_id=? AND c.state='OPEN' AND s.hospital_id=? AND s.left_at IS NULL",
+            (pid, hid)).fetchone()
+        service._require(patient['destination_hospital_id'] == hid and
+                         patient['state'] in service.ACTIVE_TRANSPORT and session is not None,
+                         'NOT_PARTICIPANT', '현재 목적지 병원만 위치를 조회할 수 있습니다', 403)
+        coordinates = (patient['lat'], patient['lon'])
+        destination = (hospital['lat'], hospital['lon'])
+        position = None if None in coordinates else dict(lat=coordinates[0], lon=coordinates[1],
+                                                        updated_at=patient['location_updated_at'])
+        target = None if None in destination else dict(lat=destination[0], lon=destination[1],
+                                                       name=hospital['name'])
+        estimate = synthetic_estimate(coordinates, destination) if position and target else None
+        return dict(case_number=patient['case_number'], state=patient['state'],
+                    position=position, destination=target, estimate=estimate,
+                    eta_at=patient['eta_at'], fetched_at=ctx.now)
+
+
 @route('POST', r'/api/patients/(?P<pid>[\w-]+)/transport-review')
 def _(ctx, pid):
     service._require(type(ctx.body.get('enabled')) is bool, 'INVALID', 'enabled는 true 또는 false입니다')

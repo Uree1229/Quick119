@@ -25,6 +25,11 @@ def load_catalog():
             or not all(isinstance(h[k], str) and h[k].strip()
                        for h in hospitals for k in ("name", "address", "hpid"))):
         raise ValueError("Incomplete or duplicate Seoul demo identity.")
+    if any("display_name" in h and (not isinstance(h["display_name"], str)
+                                    or not h["display_name"].strip()) for h in hospitals):
+        raise ValueError("Invalid Seoul demo display name.")
+    if len({h.get("display_name", h["name"]) for h in hospitals}) != len(hospitals):
+        raise ValueError("Duplicate Seoul demo display name.")
     if any(not h["address"].startswith("서울특별시 ") for h in hospitals):
         raise ValueError("The demo catalog must contain only Seoul hospitals.")
     for point in [catalog["origin"], *hospitals]:
@@ -82,7 +87,7 @@ def apply_seoul_overlay(path):
                                (alias,)).fetchone()
             ids = json.loads(row[-1])
             provenance = dict(nmc=h["hpid"], identity_source="seoul_public", snapshot_date=catalog["snapshot_date"])
-            identity = (h["name"], h["address"], h["lat"], h["lon"], "")
+            identity = (h.get("display_name", h["name"]), h["address"], h["lat"], h["lon"], "")
             if row[:-1] != identity or not provenance.items() <= ids.items():
                 ids.update(provenance)
                 conn.execute("UPDATE hospitals SET name=?, address=?, lat=?, lon=?, phone=?, source_ids=? WHERE id=?",

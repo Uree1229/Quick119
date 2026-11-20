@@ -181,6 +181,7 @@ for method, path in (
     ("POST", "/api/hospitals/{hid}/patients/{pid}/work-activities"),
     ("POST", "/api/hospitals/{hid}/patients/{pid}/work-activities/{aid}/stop"),
     ("GET", "/api/hospitals/{hid}/patients/{pid}/conversation"),
+    ("GET", "/api/hospitals/{hid}/patients/{pid}/transport-location"),
     ("POST", "/api/hospitals/{hid}/patients/{pid}/messages"),
     ("GET", "/api/hospitals/{hid}/patients/{pid}/important-events"),
     ("POST", "/api/hospitals/{hid}/patients/{pid}/important-events/{eid}/delivered"),

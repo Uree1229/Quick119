@@ -1,0 +1,6 @@
+<nav class="bottom-nav" aria-label="하단 메뉴">
+  <a href="/" {% if active_nav == 'home' %}aria-current="page"{% endif %}>{{ icon('home') }}<span>홈</span></a>
+  <a href="/transport/" data-workspace-view="chat" {% if active_nav == 'transport' %}aria-current="page"{% endif %}>{{ icon('chat') }}<span>채팅</span></a>
+  <a href="/transport/?view=map" data-workspace-view="gps">{{ icon('map') }}<span>지도</span></a>
+  <a href="/patients" {% if active_nav == 'patients' %}aria-current="page"{% endif %}>{{ icon('users') }}<span>환자</span></a>
+</nav>

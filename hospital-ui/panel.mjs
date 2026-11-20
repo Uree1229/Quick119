@@ -3,7 +3,7 @@
 // - 확정 전: 문의 한 건의 요약 카드, 회신 버튼(수용 가능·확인 중·수용 불가), 추가 질문
 // - 확정 후: 이송 대화, 수용 유지·수용 취소 요청, 환자 도착 확인
 // - 다른 화면(EMR 등)에 iframe으로 들어가면 건수를 알리고, 같은 출처의 화면과는 대화 열기·침상 안내를 주고받는다.
-import { buildThreads, threadStatus, summaryFields, severityLabel, severityKey, patientTitle, acceptBlock, inquiryLog, chatLog,
+import { buildThreads, threadStatus, summaryFields, severityLabel, severityKey, patientTitle, acceptBlock, inquiryLog, chatLog, compactChatLog,
   chatSummary, threadBadge, needsReview, etaLabel, DECLINE_REASONS, SEVERITY } from './panel-state.mjs';
 import { ChatRecoveryStore, newChatRequest, confirmsChatRequest, isRejected } from './chat-recovery.mjs';
 
@@ -181,9 +181,22 @@ function resetThreadUi() {
   sig.log = sig.actions = sig.head = '';
 }
 
+// 위치 지도는 새 창 대신 대화 자리에 연다. 새로고침은 지도 화면 안에 있다.
+function showLocation(open) {
+  const link = $('locationLink'), sheet = $('locationSheet'), frame = $('locationFrame');
+  open = open && !link.hidden && !!link.href;
+  if (open && frame.getAttribute('src') !== link.href) frame.src = link.href;
+  if (!open && sheet.hidden) return;
+  sheet.hidden = !open;
+  link.setAttribute('aria-expanded', String(open));
+  link.textContent = open ? '위치 닫기' : '위치 조회';
+  if (open) document.querySelector('.qp-chat').dataset.location = 'open';
+  else { delete document.querySelector('.qp-chat').dataset.location; frame.removeAttribute('src'); }
+}
+
 function selectThread(key, { show = true } = {}) {
   if (busy || !threads.some((t) => t.key === key)) return false;
-  if (key !== activeKey) { activeKey = key; resetThreadUi(); }
+  if (key !== activeKey) { activeKey = key; resetThreadUi(); showLocation(false); }
   if (show) view = 'chat';
   sig.threads = '';
   markSeen(); render(); notifyHost();
@@ -234,11 +247,20 @@ function renderHead() {
   const thread = active(), list = rows();
   const others = list.filter((row) => row.key !== activeKey).reduce((sum, row) => sum + row.badge, 0);
   const status = thread ? threadStatus(thread, now()) : null;
-  const next = JSON.stringify([thread?.key, thread && patientTitle(thread.patient), status, others]);
+  const next = JSON.stringify([thread?.key, thread && patientTitle(thread.patient), thread?.stage, thread?.patient?.state, status, others]);
   if (next === sig.head) return;
   sig.head = next;
   $('chatTitle').textContent = thread ? patientTitle(thread.patient) : '대화를 선택하세요';
   $('chatStatus').textContent = status?.text || '';
+  const canLocate = thread?.stage === 'confirmed' && ['CONFIRMED', 'IN_TRANSIT'].includes(thread.patient.state);
+  $('locationLink').hidden = !canLocate;
+  if (canLocate) {
+    const url = new URL('transport-location.html', location.href);
+    url.searchParams.set('hid', hid);
+    url.searchParams.set('pid', thread.patientId);
+    $('locationLink').href = url.href;
+    $('locationPopout').href = url.href;
+  } else { $('locationLink').removeAttribute('href'); showLocation(false); }
   if (status?.tone) $('chatStatus').dataset.tone = status.tone; else delete $('chatStatus').dataset.tone;
   $('backBadge').hidden = !others; $('backBadge').textContent = String(others);
   $('back').setAttribute('aria-label', others ? `대화 목록으로 · 다른 대화에 확인할 것 ${others}건` : '대화 목록으로');
@@ -264,15 +286,21 @@ function renderLog() {
     return;
   }
   const chat = chatOf(thread);
-  const entries = isChatStage(thread.stage) ? chatLog(chat ? [...chat.items.values()] : []) : inquiryLog(thread.inquiry);
+  const entries = isChatStage(thread.stage) ? compactChatLog(chatLog(chat ? [...chat.items.values()] : [])) : inquiryLog(thread.inquiry);
   // 매 조회마다 바뀌는 경과 시간 값은 빼고 비교해, 읽는 중에 대화가 다시 그려지지 않게 한다.
   const next = JSON.stringify([thread.key, thread.stage, thread.patient, hospital?.resources, entries],
     (key, value) => (VOLATILE.has(key) ? undefined : value));
   if (next === sig.log) return;
   sig.log = next;
   const pinned = shownKey !== thread.key || box.scrollHeight - box.scrollTop - box.clientHeight < 48;
+  const openGroups = new Set(shownKey === thread.key
+    ? [...$('logInner').querySelectorAll('details[data-routine-id][open]')].map(node => node.dataset.routineId) : []);
   shownKey = thread.key;
-  $('logInner').replaceChildren(card(thread), ...entries.map((entry) => entry.kind === 'notice'
+  $('logInner').replaceChildren(card(thread), ...entries.map((entry) => entry.kind === 'routine-group'
+    ? h('details', {class: 'qp-routine', 'data-routine-id': entry.id, open: openGroups.has(entry.id)},
+      h('summary', {text: `진행 기록 ${entry.entries.length}건`}),
+      ...entry.entries.map(item => h('p', {text: item.text})))
+    : entry.kind === 'notice'
     ? h('p', { class: 'qp-notice', text: entry.text })
     : h('div', { class: 'qp-msg', 'data-kind': entry.kind }, h('p', { text: entry.text }),
       entry.at ? h('small', { text: (entry.kind === 'crew' && entry.sender ? entry.sender + ' · ' : '') + clock(entry.at) }) : null)));
@@ -487,6 +515,12 @@ $('hospital').addEventListener('change', () => {
   $('fullLink').href = './?hid=' + encodeURIComponent(hid);
   render(); void pollNow();
 });
+$('locationLink').addEventListener('click', (event) => {
+  if (event.ctrlKey || event.metaKey || event.shiftKey || event.button) return;   // 새 탭·새 창으로 여는 동작은 그대로 둔다
+  event.preventDefault();
+  showLocation($('locationSheet').hidden);
+});
+$('locationClose').addEventListener('click', () => { showLocation(false); $('locationLink').focus(); });
 $('back').addEventListener('click', () => { view = 'list'; render(); $('threads').querySelector('[aria-pressed=true]')?.focus(); });
 wide.addEventListener('change', () => { markSeen(); render(); });
 $('notifyToggle').addEventListener('click', async () => {

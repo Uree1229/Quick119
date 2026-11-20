@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 
 import mimetypes
 from fastapi.staticfiles import StaticFiles
+from tailscale_demo import TailscaleDemoAccess
 
 from pathlib import Path
 
@@ -92,6 +93,7 @@ async def lifespan(app):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(TailscaleDemoAccess)
 
 # Preparation only: disabled by default, synthetic loopback runtime required.
 from tts_audio import neural_enabled

@@ -30,6 +30,8 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
     setAttribute(name, value) { this[name] = value; }
     append(...children) { for (const child of children) { if (child.parent) child.parent.children = child.parent.children.filter(node => node !== child); this.children.push(child); child.parent = this; } }
     replaceChildren(...children) { this.children = []; this.append(...children); }
+    remove() { if (this.parent) this.parent.children = this.parent.children.filter(node => node !== this); this.parent = null; if (this.id) nodes.delete(this.id); }
+    requestSubmit() { this.dispatchEvent({type: 'submit', preventDefault() {}}); }
     querySelector(selector) {
       if (!selector.startsWith('.')) return null;
       const className = selector.slice(1);
@@ -48,8 +50,8 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
   const ids = ['workspace', 'chat', 'gps', 'sheet', 'sheet-handle', 'message', 'message-label', 'message-form', 'messages',
     'participants', 'depart', 'voice-start', 'voice-stop', 'voice-status', 'voice-interim', 'new-case', 'send',
     'discard', 'review-draft', 'pending', 'connection', 'chat-status',
-    'hospitals', 'voice-panel', 'hospital-contact', 'hospital-status', 'reload-hospitals', 'assignment-strip',
-    'assignment-meta', 'inquiries', 'current-destination', 'error', 'unread', 'toggle', 'toggle-label',
+    'hospitals', 'hospitals-title', 'voice-panel', 'hospital-contact', 'hospital-status', 'reload-hospitals', 'assignment-strip',
+    'assignment-meta', 'inquiries', 'current-destination', 'action-alert', 'error', 'unread', 'toggle', 'toggle-label',
     'title', 'mark-read', 'review-panel', 'patient-info', 'start-search', 'review-close', 'review-close-top', 'review-form', 'search-status',
     'tts-toggle', 'tts-status', 'progress-log-toggle', 'progress-log-count', 'progress-log', 'progress-log-list',
     'progress-log-close-top', 'progress-log-close', 'intake-feedback', 'answer', 'command-panel', 'command-close',
@@ -243,6 +245,25 @@ test('TTS announces preserved acceptance candidates during transport reassignmen
   assert.deepEqual(h.utterances.map(item => item.text), [notice.text]);
 });
 
+test('routine updates collapse without hiding messages and remain in progress history', async () => {
+  const h = harness({restored: true});
+  const event = (id, type, text, data = {}) => ({id: `event:${id}`, kind: 'system', type,
+    sender_role: 'system', text, data, at: id, order_key: [id, 0, id]});
+  h.state.messages.push(event(2, 'patient_information_amended', '환자정보가 수정되어 이전 문의를 종료했습니다.'),
+    event(3, 'other', '이송 관련 기록이 등록됐습니다.'),
+    event(4, 'crew_intake_reply', '', {reply: '확인한 환자 정보를 반영했습니다.'}),
+    {id: 'message:1', kind: 'message', sender_role: 'hospital', text: '병원 답장', at: 5, order_key: [5, 1, 1]},
+    event(6, 'enroute_patient_change_requested', '환자 정보 확인 필요'));
+  await settle();
+  const group = h.document.getElementById('transport-notices-event:2');
+  assert.ok(group);
+  assert.equal(group.children[0].textContent, '확인한 환자 정보를 반영했습니다.');
+  assert.ok(h.document.getElementById('transport-item-message:1'));
+  assert.ok(h.document.getElementById('transport-item-event:6'));
+  assert.ok(h.$('progress-log-list').children.some(row => row.dataset.eventType === 'patient_information_amended'));
+  assert.ok(h.$('progress-log-list').children.some(row => row.dataset.eventType === 'crew_intake_reply'));
+});
+
 test('accepted reassignment uses the top inquiry tray and hospital card, then changes destination on click', async () => {
   const h = harness({restored: true, hospitalList: [
     {id: 'H01', name: '기존 병원', source: 'synthetic', lat: 35.1, lon: 126.8},
@@ -270,12 +291,15 @@ test('accepted reassignment uses the top inquiry tray and hospital card, then ch
     order_key: [10, 0, 10]});
   await settle();
   assert.equal(h.$('workspace').dataset.reassignmentActive, 'true');
+  assert.equal(h.$('action-alert').hidden, false);
+  assert.match(h.$('action-alert').textContent, /새 목적지를 확정하세요/);
+  assert.match(h.$('action-alert').textContent, /사유: 현재 병상 부족/);
   const departureBand = h.document.getElementById('transport-notices-event:7');
   assert.equal(departureBand.children[0].textContent, '기존 병원으로 출발했습니다.',
     'an earlier band keeps describing its own event');
   const noticeGroup = h.document.getElementById('transport-notices-event:8');
   assert.ok(noticeGroup, 'the adjustment starts its own band');
-  assert.equal(noticeGroup.dataset.emphasis, 'decision');
+  assert.equal(noticeGroup.dataset.emphasis, 'action');
   assert.equal(noticeGroup.children[0].textContent, '수용 가능한 대체병원 확보 · 새 목적지를 확정하세요',
     'only the newest band carries the live confirmation prompt');
   assert.equal(noticeGroup.children[1].textContent, '사유: 현재 병상 부족');
@@ -288,10 +312,12 @@ test('accepted reassignment uses the top inquiry tray and hospital card, then ch
   const descendants = node => [node, ...(node.children || []).flatMap(descendants)];
   const trayRows = h.$('inquiries').children;
   assert.deepEqual(trayRows.map(row => row.children[1].children[0].textContent),
-    ['현재 목적지', '대체 병원', '문의 중 병원']);
+    ['대체 병원', '현재 목적지', '문의 중 병원']);
   const confirmationRow = trayRows.find(row => descendants(row).some(node => node.dataset.transportConfirm === '42'));
   const confirmButton = descendants(confirmationRow).find(node => node.dataset.transportConfirm === '42');
   assert.ok(confirmButton, 'accepted alternative is confirmed from the top inquiry tray');
+  assert.equal(confirmButton.textContent, '새 목적지로 확정');
+  assert.equal(confirmButton['aria-label'], '대체 병원을(를) 새 목적지로 확정');
   assert.ok(descendants(card).some(node => node.dataset.transportConfirm === '42'),
     'the hospital card offers the same action');
   assert.equal(trayRows.flatMap(descendants).some(node => node.dataset.hospitalId === 'H01'), false,
@@ -307,12 +333,22 @@ test('accepted reassignment uses the top inquiry tray and hospital card, then ch
   assert.equal(request.body.inquiry_id, 42);
   assert.equal(h.state.session.hospital_id, 'H02');
   assert.equal(h.$('workspace').dataset.reassignmentActive, 'false', 'resolved reassignment folds the tray');
+  assert.equal(h.$('action-alert').hidden, true);
   assert.equal(h.$('current-destination').hidden, true);
   assert.equal(h.document.getElementById('transport-notices-event:8'), noticeGroup, 'the adjustment band updates in place');
   assert.equal(noticeGroup.children[0].textContent, '기존 병원에서 조정을 요청했습니다.',
     'once resolved, the adjustment band no longer asks for a confirmation');
   const changedBand = h.document.getElementById('transport-notices-event:12');
   assert.match(changedBand.children[0].textContent, /목적지가 변경/, 'the new destination gets its own band');
+
+  h.state.inquiries.push({id: 44, hospital_id: 'H03', hospital_name: '문의 중 병원', state: 'ACCEPTED', usable: true});
+  h.state.messages.push({id: 'event:13', kind: 'system', type: 'adjustment_needed', sender_role: 'system',
+    text: '다시 조정을 요청했습니다.', data: {}, at: 13, order_key: [13, 0, 13]},
+    {id: 'event:14', kind: 'system', type: 'transport_inquiry_ready', sender_role: 'system',
+      text: '대체병원을 확보했습니다.', at: 14, order_key: [14, 0, 14]});
+  await h.poll();
+  assert.equal(h.$('action-alert').hidden, false);
+  assert.doesNotMatch(h.$('action-alert').textContent, /현재 병상 부족/, 'a new cycle must not reuse the previous reason');
 });
 
 test('TTS asks the opening question and reads the intake reply once, not the receipt or draft summary', async () => {
@@ -691,6 +727,40 @@ test('an ambiguous private send retries the same null scope and request id after
   assert.equal(posts.length, 2); assert.deepEqual(posts[0].body, posts[1].body);
   assert.equal(posts[1].body.hospital_session_id, null); assert.equal(h.state.receipts.size, 1);
   assert.equal(h.$('message').value, '');
+});
+
+test('empty-draft speech submits once on recognition end in intake and hospital chat', async () => {
+  for (const hospital of [false, true]) {
+    const h = harness({restored: true});
+    await settle();
+    if (hospital) { h.join(); await h.poll(); }
+    await h.$('voice-start').emit('click');
+    const speech = h.speeches[0];
+    assert.equal(speech.continuous, false);
+    speech.result('호흡 정상', true);
+    assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 0);
+    speech.onend(); await settle();
+    const requests = h.calls.filter(call => call.url.endsWith('/messages'));
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].body.body, '호흡 정상');
+    assert.equal(requests[0].body.hospital_session_id, hospital ? 7 : null);
+    speech.onend(); await settle();
+    assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 1);
+  }
+});
+
+test('empty or unresolved speech and cancelled sessions never auto-submit', async () => {
+  for (const kind of ['empty', 'interim', 'cancelled']) {
+    const h = harness({restored: true}); await settle();
+    await h.$('voice-start').emit('click'); const speech = h.speeches[0];
+    if (kind === 'interim') speech.result('미확정 보고', false);
+    if (kind === 'cancelled') {
+      speech.result('확정 보고', true);
+      h.document.hidden = true; await h.document.emit('visibilitychange');
+    }
+    speech.onend(); await settle();
+    assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 0, kind);
+  }
 });
 
 test('voice preserves typed draft, ignores interim results, deduplicates finals and requires explicit send', async () => {

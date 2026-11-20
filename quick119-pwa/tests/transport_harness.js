@@ -225,7 +225,8 @@
   check(nav('stop').disabled && watchers.length === 2 && $('messages').textContent.includes('백그라운드 중 답장'), 'Foreground catches up chat but GPS needs explicit restart');
   state = 'CLOSED'; await tick(); check($('send').disabled && $('chat-status').textContent.includes('종료'), 'Server conversation closure makes chat read-only');
   check(storageWrites.length === 0, 'No message or patient writes to persistent browser storage');
-  check(invalidations > 0 && replacements === 1, 'Map resize is handled; view switches do not navigate');
+  // A view switch only rewrites the address (?view=map) in place, so a reload reopens the same screen; it never loads a page.
+  check(invalidations > 0 && replacements >= 1, 'Map resize is handled; view switches do not navigate');
   for (const width of [360, 375, 390, 412, 430]) {
     document.documentElement.style.width = width + 'px'; document.body.style.width = (width - 16) + 'px';
     for (let i = 0; i < 2; i++) { $('toggle').click(); await settle(); check(document.getElementById('transport-workspace').scrollWidth <= width - 16, 'No horizontal overflow at ' + width + 'px'); }

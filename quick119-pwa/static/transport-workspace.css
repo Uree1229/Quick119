@@ -5,6 +5,8 @@
 /* ---------- Full-height app screen inside the existing shell ---------- */
 .app-shell--workspace{display:flex;flex-direction:column;height:100vh;height:100dvh;min-height:0;padding-bottom:0}
 .transport-page{flex:1;min-height:0;display:flex;flex-direction:column}
+.app-shell--workspace .bottom-nav{position:static;transform:none;width:100%;flex:none}
+.app-shell--workspace:has(#transport-workspace[data-kb=open]) .bottom-nav{display:none}
 @media(min-width:600px){.app-shell--workspace{height:calc(100dvh - 48px)}}
 @media (min-width:600px) and (max-height:560px){
   .app-shell--workspace{height:100dvh;margin-block:0;border-radius:0}
@@ -141,9 +143,7 @@
 #transport-workspace .tw-current-destination[hidden]{display:none}
 /* During an adjustment the current destination is the first chip of the same sliding tray as the first selection. */
 #transport-workspace .tw-inquiries .tw-current-destination{flex:0 0 auto;width:auto;max-width:min(128px,34vw);min-height:44px;padding:0 10px 0 8px;scroll-snap-align:start}
-#transport-workspace .tw-inquiries .tw-current-destination-copy strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
-/* The chip to confirm stays fully visible beside the current destination; its hospital name ellipsizes instead. */
-#transport-workspace[data-reassignment-active=true] .tw-inquiries .transport-inquiry:has(.tw-btn-confirm){max-width:calc(100% - min(128px,34vw) - 6px)}
+#transport-workspace .tw-inquiries .tw-current-destination-copy strong{white-space:normal;overflow-wrap:anywhere}
 .tw-current-destination .tw-inquiry-icon{width:20px;height:20px}
 .tw-current-destination-copy{display:flex;min-width:0;flex-direction:column;line-height:1.25}
 .tw-current-destination-copy span{color:var(--tw-muted);font-size:10px;font-weight:800;white-space:nowrap}
@@ -164,31 +164,36 @@
 /* Live state is announced to screen readers but needs no banner: the header dot and participants show it. */
 #transport-workspace[data-connection=live] .tw-connection{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
 .tw-error{background:var(--tw-red-soft);color:#a3262b;border-bottom:1px solid #f5c7c9}
+.tw-action-alert{display:flex;align-items:center;gap:8px;flex:none;margin:0;padding:8px 12px;border-bottom:1px solid #e6a432;background:#fff0ce;color:#704300;font-size:13px;font-weight:900;line-height:1.35;overflow-wrap:anywhere}
+.tw-action-alert::before{content:"!";display:grid;place-items:center;flex:none;width:20px;height:20px;border-radius:50%;background:#a95800;color:#fff}
+.tw-action-alert[hidden]{display:none}
 /* Inquiry tray: one horizontal strip (57px) instead of a 59px row per hospital. The chip that needs a decision
    (ACCEPTED with 목적지 확정) or names the destination comes first in DOM and keyboard order; the next chip peeks at the edge.
    It is the first thing to give way when the screen is short (the chat column below never gets smaller than its dock). */
 .tw-inquiries{position:relative;z-index:4;flex:1 1 0;min-width:0;min-height:min(55px,40%);display:flex;align-items:stretch;gap:6px;padding:6px 12px;background:#fff;border-bottom:1px solid var(--tw-line);overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scroll-snap-type:x proximity;scroll-padding-inline:12px;scrollbar-width:none}
 .tw-inquiries::-webkit-scrollbar{display:none}
 .tw-inquiries:empty{display:none}
-.transport-inquiry{flex:0 0 auto;max-width:calc(100% - 40px);display:flex;align-items:center;gap:8px;min-height:44px;padding:0 10px 0 8px;border:1px solid var(--tw-line);border-radius:12px;background:var(--tw-soft);scroll-snap-align:start}
-.transport-inquiry:has(.tw-btn-confirm){padding-right:1px}
+.transport-inquiry{position:relative;flex:0 0 auto;max-width:calc(100% - 40px);display:flex;align-items:center;gap:8px;min-height:46px;padding:3px 10px 3px 8px;border:1px solid var(--tw-line);border-radius:12px;background:var(--tw-soft);scroll-snap-align:start}
 .transport-inquiry[data-state=ACCEPTED]{border-color:#9fd3b8;background:var(--tw-green-soft)}
 .transport-inquiry[data-state=CONFIRMED]{border-color:#bcd0e8;background:var(--tw-navy-soft)}
 .tw-inquiry-icon{position:relative;flex:none;width:24px;height:24px;border-radius:8px;background:#fff;color:var(--tw-navy);box-shadow:0 1px 3px #17375e14}
 .tw-inquiry-icon::before{content:"";position:absolute;inset:4px;background:currentColor;-webkit-mask:var(--i-hospital) center/contain no-repeat;mask:var(--i-hospital) center/contain no-repeat}
 [data-state=ACCEPTED] .tw-inquiry-icon{color:var(--tw-green)}
 .tw-inquiry-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
-.tw-inquiry-copy strong{font-size:13px;line-height:18px;font-weight:900;color:var(--tw-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tw-inquiry-copy strong{font-size:13px;line-height:17px;font-weight:900;color:var(--tw-ink);white-space:nowrap}
 .tw-inquiry-copy .tw-pill{height:18px;padding:0 7px;font-size:11px}
 #transport-workspace .tw-confirm-control{
   position:relative;display:grid;place-items:center;flex:none;width:44px;height:44px;min-height:44px;padding:0;
   overflow:hidden;border:0;border-radius:12px;background:transparent;color:var(--tw-navy);font-size:0;text-indent:-9999px
 }
-#transport-workspace button.tw-confirm-control{cursor:pointer}
-#transport-workspace button.tw-confirm-control:hover::before{border-color:var(--tw-navy);background:var(--tw-navy-soft)}
+/* Compact two-line button: the label wraps (새 목적지로 / 확정) so the hospital name keeps its room. */
+#transport-workspace button.tw-confirm-control{display:inline-flex;justify-content:center;align-items:center;flex:none;width:auto;height:auto;min-width:84px;max-width:88px;min-height:44px;padding:4px 7px;border-radius:9px;word-break:keep-all;background:var(--tw-navy);color:#fff;font-size:12px;font-weight:800;line-height:1.25;text-align:center;text-indent:0;white-space:normal;cursor:pointer}
+#transport-workspace button.tw-confirm-control:hover{background:#285a90}
+#transport-workspace button.tw-confirm-control:disabled{opacity:.5;cursor:not-allowed}
 #transport-workspace .tw-confirm-control::before{
   content:"";width:22px;height:22px;border:2px solid #6f839b;border-radius:6px;background:#fff
 }
+#transport-workspace button.tw-confirm-control::before{display:none}
 #transport-workspace .tw-confirm-control--checked::before{border-color:var(--tw-green);background:var(--tw-green)}
 #transport-workspace .tw-confirm-control--checked::after{
   content:"";position:absolute;width:15px;height:15px;background:#fff;-webkit-mask:var(--i-check) center/contain no-repeat;mask:var(--i-check) center/contain no-repeat
@@ -227,16 +232,19 @@
 .transport-message[data-cont=true]:not([data-role=patient]) .transport-bubble{border-top-left-radius:16px}
 .transport-message[data-cont=true][data-role=patient] .transport-bubble{border-top-right-radius:16px}
 /* Clinically relevant single notices stay visible instead of joining a collapsed workflow group. */
-.transport-message[data-kind=notice]{display:block;align-self:center;max-width:100%;margin-top:10px;padding:5px 11px;border-radius:12px;background:#e9eff6;color:#3f546c;font-size:12px;line-height:1.45;text-align:center}
+.transport-message[data-kind=notice]{display:block;align-self:center;max-width:100%;margin-top:6px;padding:3px 8px;border-radius:8px;background:#f1f4f7;color:#627187;font-size:11px;line-height:1.4;text-align:center}
 .transport-message[data-kind=notice]::before{display:none}
 .transport-message[data-kind=notice] .transport-sender{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
 .transport-message[data-kind=notice] .transport-bubble{display:inline;max-width:none;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:inherit;font-size:12px;font-weight:700;line-height:1.45}
 .transport-message[data-kind=notice] .transport-time{display:inline;margin:0 0 0 6px;font-weight:600}
 /* Consecutive system events become one expandable progress card; their original text remains available inside. */
-.tw-system-group{position:relative;display:flex;flex-wrap:wrap;align-items:baseline;justify-content:center;column-gap:6px;align-self:center;max-width:100%;margin-top:10px;padding:5px 11px;border-radius:12px;background:#e9eff6;color:#3f546c;text-align:center}
+.tw-system-group{position:relative;display:flex;flex-wrap:wrap;align-items:baseline;justify-content:center;column-gap:6px;align-self:center;max-width:100%;margin-top:5px;padding:3px 8px;border-radius:8px;background:#f1f4f7;color:#627187;text-align:center}
 .tw-system-group[data-emphasis=adjustment]{background:#fff1d6;color:#7a5410}
 .tw-system-group[data-emphasis=decision]{background:#dff3e7;color:#17613b}
 .tw-system-group[data-emphasis=attention]{background:#fde9dc;color:#8a4316}
+.tw-system-group[data-emphasis=action]{align-self:stretch;justify-content:flex-start;align-items:center;margin-top:10px;padding:10px 12px;border:1px solid #e6a432;border-left:4px solid #c46b00;border-radius:10px;background:#fff3d8;color:#704300;text-align:left}
+.tw-system-group[data-emphasis=action]::before{content:"!";display:grid;place-items:center;flex:none;width:20px;height:20px;border-radius:50%;background:#a95800;color:#fff;font-size:14px;font-weight:900}
+.tw-system-group[data-emphasis=action] .tw-system-group-headline{flex:1 1 calc(100% - 30px);font-size:14px;font-weight:900}
 .tw-system-group-headline{margin:0!important;color:inherit;font-size:12px;font-weight:700;line-height:1.45;overflow-wrap:anywhere}
 .tw-system-group-reason{margin:0!important;color:inherit;font-size:12px;font-weight:600;line-height:1.45;overflow-wrap:anywhere}
 .tw-system-group-reason::before{content:"·";margin-right:6px}
@@ -406,6 +414,7 @@
 .tw-cand-name{display:block;color:var(--tw-ink);font-size:15.5px;font-weight:900;letter-spacing:-.4px;line-height:1.35;overflow-wrap:anywhere}
 .tw-cand-facts{margin-top:2px!important;color:#4b5f77;font-size:12.5px;line-height:1.5;overflow-wrap:anywhere}
 .tw-cand-titles .tw-pill{margin-top:6px}
+.tw-cand-side{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:6px}
 .tw-eta{flex:none;text-align:right;line-height:1.2}
 .tw-eta strong{display:block;color:var(--tw-navy);font-size:21px;font-weight:900;letter-spacing:-.6px;font-variant-numeric:tabular-nums}
 .tw-eta small{color:var(--tw-muted);font-size:10.5px;font-weight:800}
@@ -413,11 +422,10 @@
 .tw-cand-why summary{display:flex;align-items:center;gap:6px;min-height:34px;font-weight:800;cursor:pointer}
 .tw-cand-why ul{margin:2px 0 4px;padding-left:18px;line-height:1.6}
 .tw-cand-why li{overflow-wrap:anywhere}
-.tw-cand-actions{display:grid;grid-template-columns:1fr 1.5fr;gap:8px;margin-top:6px}
-.tw-cand-actions:has(.tw-confirm-control){grid-template-columns:minmax(0,1fr) 44px;align-items:center}
+.tw-cand-actions{display:flex;justify-content:flex-end;margin-top:6px}
+.tw-cand-actions:empty{display:none}
+#transport-workspace .tw-cand-route{min-width:68px;padding:0 9px;font-size:12px}
 .tw-cand-route::before{content:"";width:16px;height:16px;background:currentColor;-webkit-mask:var(--i-route) center/contain no-repeat;mask:var(--i-route) center/contain no-repeat}
-.tw-cand-inquire::before{content:"";width:17px;height:17px;background:currentColor;-webkit-mask:var(--i-hospital) center/contain no-repeat;mask:var(--i-hospital) center/contain no-repeat}
-.tw-cand-link{display:inline-flex;align-items:center;gap:5px;min-height:36px;color:var(--tw-muted);font-size:12px;font-weight:700;text-decoration:underline;text-underline-offset:3px}
 
 /* ---------- Patient review sheet (native dialog) ---------- */
 :is(#transport-review-panel,#transport-command-panel,#transport-progress-log){width:min(480px,calc(100vw - 16px));max-width:calc(100vw - 16px);max-height:min(92dvh,860px);margin:auto auto max(8px,env(safe-area-inset-bottom));padding:0;border:0;border-radius:24px;background:#fff;color:var(--tw-ink);overflow:hidden;box-shadow:0 24px 64px #0d1c2e5c}
@@ -567,7 +575,6 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
   .tw-dock{padding-left:10px;padding-right:10px}
   #transport-workspace .tw-send{padding:0 13px 0 11px}
   .tw-facts{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .tw-cand-actions{grid-template-columns:1fr 1.3fr}
 }
 @media(max-width:340px){
   /* Icon-only send keeps one line for the draft; the button's text stays its accessible name. */
@@ -693,3 +700,13 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
 #transport-command-fields .tw-suggest-skip{border:1px solid transparent;background:transparent;color:#5d6b7c}
 #transport-command-fields .tw-needs{margin-top:4px!important;color:#b42332;font-size:12.5px;font-weight:800}
 #transport-command-confirm:disabled{opacity:.55;cursor:not-allowed}
+
+/* ---------- Inquiry cards: content-sized; an accepted hospital's whole card is the confirm control ---------- */
+#transport-workspace .transport-inquiry:has(button.tw-confirm-control){min-width:96px;cursor:pointer;box-shadow:0 0 0 2px #1b7a5240}
+#transport-workspace .transport-inquiry:has(button.tw-confirm-control):hover{box-shadow:0 0 0 2px var(--tw-green)}
+#transport-workspace .transport-inquiry:has(button.tw-confirm-control) .tw-pill::after{content:"· 눌러서 확정";font-weight:900}
+/* The real button stays for keyboards and screen readers; it covers the card and shows no box of its own. */
+#transport-workspace .transport-inquiry button.tw-confirm-control{position:absolute;inset:0;z-index:1;width:100%;height:100%;min-width:0;max-width:none;min-height:0;padding:0;border:0;border-radius:inherit;background:transparent;color:transparent;font-size:0;box-shadow:none}
+#transport-workspace .transport-inquiry button.tw-confirm-control:hover{background:transparent}
+#transport-workspace .transport-inquiry button.tw-confirm-control:focus-visible{outline:3px solid #3486e4;outline-offset:2px}
+#transport-workspace .transport-inquiry:has(button.tw-confirm-control:disabled){opacity:.6;cursor:not-allowed;box-shadow:none}

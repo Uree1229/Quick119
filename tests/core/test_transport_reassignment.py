@@ -1,12 +1,33 @@
 """조정 요청 이후 자동 대체병원 문의와 사람의 목적지 변경 검증."""
 import threading
+from types import SimpleNamespace
 
-from server import conversations, db, service, transport_reassignment as reassignment
+from server import app, conversations, db, service, transport_reassignment as reassignment
 from test_server import EST, T0
 from test_transport_review import TransportBase
 
 
 class PositionVersioning(TransportBase):
+    def test_hospital_location_requires_current_open_session_and_active_transport(self):
+        self.setup_transport()
+        ctx = SimpleNamespace(conn=self.conn, now=T0 + 40)
+        result = app.hospital_transport_location(ctx, 'H1', 'A')
+        self.assertEqual(result['state'], 'IN_TRANSIT')
+        self.assertEqual(result['estimate']['provider'], 'synthetic')
+        self.assertEqual(result['position']['lat'], service._patient(self.conn, 'A')['lat'])
+        self.assertEqual(self.code(app.hospital_transport_location, ctx, 'H2', 'A'), 'NOT_PARTICIPANT')
+        self.conn.execute("UPDATE conversation_hospital_sessions SET left_at=? WHERE hospital_id='H1'", (T0 + 40,))
+        self.conn.commit()
+        self.assertEqual(self.code(app.hospital_transport_location, ctx, 'H1', 'A'), 'NOT_PARTICIPANT')
+
+    def test_hospital_location_handles_missing_position_without_estimate(self):
+        self.setup_transport()
+        self.conn.execute("UPDATE patients SET lat=NULL, lon=NULL, location_updated_at=NULL WHERE id='A'")
+        self.conn.commit()
+        result = app.hospital_transport_location(SimpleNamespace(conn=self.conn, now=T0 + 40), 'H1', 'A')
+        self.assertIsNone(result['position'])
+        self.assertIsNone(result['estimate'])
+
     def test_position_update_changes_location_version_only(self):
         self.setup_transport()
         before = service._patient(self.conn, 'A')

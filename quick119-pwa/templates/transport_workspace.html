@@ -1,5 +1,5 @@
 <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-<link rel="stylesheet" href="/static/transport-workspace.css?v=30">
+<link rel="stylesheet" href="/static/transport-workspace.css?v=33">
 <section id="transport-workspace" class="tw" aria-label="접수 채팅과 이송 지원" data-view="chat" data-stage="report" data-connection="pending" data-voice="idle" data-tts-cloud="{{ 'enabled' if tts_cloud else 'disabled' }}">
   <header class="tw-head">
     <div class="tw-head-row">
@@ -29,6 +29,7 @@
   <div class="tw-updates">
     <p id="transport-connection" class="tw-banner tw-connection" role="status" aria-live="polite">접수 채팅을 준비하고 있습니다.</p>
     <p id="transport-error" class="tw-banner tw-error" role="alert" hidden></p>
+    <p id="transport-action-alert" class="tw-action-alert" role="status" hidden></p>
     <div id="transport-assignment-strip" class="tw-assignment-strip" hidden>
       <div id="transport-assignment-meta" class="tw-assignment-meta">
         <div id="transport-current-destination" class="tw-current-destination" role="status" hidden></div>
@@ -194,10 +195,10 @@
   </dialog>
 </section>
 <script defer src="/static/vendor/leaflet/leaflet.js"></script>
-<script defer src="/static/car-routes.js?v=15"></script>
-<script defer src="/static/transport-workspace.js?v=8"></script>
-<script defer src="/static/chat-voice.js?v=7"></script>
+<script defer src="/static/car-routes.js?v=16"></script>
+<script defer src="/static/transport-workspace.js?v=9"></script>
+<script defer src="/static/chat-voice.js?v=8"></script>
 <script defer src="/static/voice-intake.js"></script>
 <script defer src="/static/patient-review.js?v=9"></script>
 <script defer src="/static/intake-commands.js?v=7"></script>
-<script defer src="/static/hospital-chat.js?v=33"></script>
+<script defer src="/static/hospital-chat.js?v=37"></script>

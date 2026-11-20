@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="origin">
+<title>이송 위치 조회 · 퀵119</title>
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="transport-location.css">
+</head>
+<body>
+<main>
+  <div class="bar">
+    <span id="updated" role="status">불러오는 중</span>
+    <button type="button" id="refresh">새로고침</button>
+  </div>
+  <div id="map" aria-label="환자와 목적지 지도"><p id="error" role="alert" hidden></p></div>
+  <dl>
+    <div><dt>남은 거리</dt><dd id="distance">—</dd></div>
+    <div><dt>도착 예정</dt><dd id="eta">—</dd></div>
+  </dl>
+  <p class="note">저장된 위치와 직선거리로 계산한 가상 추정입니다. 30초마다 자동으로 다시 불러옵니다.</p>
+</main>
+<script src="/static/vendor/leaflet/leaflet.js"></script>
+<script type="module" src="transport-location.mjs"></script>
+</body>
+</html>

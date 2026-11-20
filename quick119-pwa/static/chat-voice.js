@@ -1,4 +1,4 @@
-/* Final speech recognition results become a draft; sending always stays explicit. */
+/* Empty-draft speech sends on recognition end; existing drafts remain editable. */
 (() => {
   'use strict';
   if (!document.getElementById('transport-workspace')) return;
@@ -7,7 +7,7 @@
   const status = $('voice-status'), interim = $('voice-interim'), root = $('workspace');
   const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
   const available = window.isSecureContext && !!Speech;
-  let privateIntake = false, enabled = false, listening = false, finishing = false, recognition = null, generation = 0;
+  let enabled = false, listening = false, finishing = false, recognition = null, generation = 0;
   const unavailable = !window.isSecureContext
     ? '앱 마이크는 HTTPS 또는 localhost에서 사용할 수 있습니다. 휴대폰 키보드의 받아쓰기로 입력한 뒤 보내기를 누르거나 직접 입력해 주세요.'
     : '이 브라우저는 음성인식을 지원하지 않습니다. 키보드의 받아쓰기를 사용하거나 메시지를 직접 입력해 주세요.';
@@ -42,7 +42,7 @@
     status.textContent = unavailable;
   }
   document.addEventListener('quick119:composer-state', event => {
-    enabled = !!event.detail.enabled; privateIntake = !!event.detail.intake;
+    enabled = !!event.detail.enabled;
     if (!enabled && listening) cancel('대화 상태가 바뀌어 음성 입력을 중단했습니다. 확정된 초안을 확인해 주세요.');
     render();
   });
@@ -65,7 +65,7 @@
     if (!available) { showProblem = !showProblem; render(); return; }
     const ticket = ++generation, processed = new Set();
     const emptyAtStart = !input.value.trim();
-    const auto = privateIntake && emptyAtStart;
+    const auto = emptyAtStart;
     showProblem = false;
     const segments = [];
     let failed = false, unresolved = false;
@@ -75,7 +75,7 @@
       current.lang = 'ko-KR'; current.continuous = !auto; current.interimResults = true; current.maxAlternatives = 3;
       current.onstart = () => {
         if (ticket !== generation || !listening) return;
-        status.textContent = auto ? '환자 상태나 명령을 말해 주세요. 인식이 끝나면 접수에 반영합니다.' : '듣고 있습니다. 인식된 내용을 확인한 뒤 보내세요.';
+        status.textContent = auto ? '말씀해 주세요. 인식이 끝나면 자동으로 보냅니다.' : '듣고 있습니다. 인식된 내용을 확인한 뒤 보내세요.';
       };
       current.onresult = event => {
         if (ticket !== generation || !listening) return;
@@ -84,8 +84,12 @@
           const result = event.results[i];
           if (result.isFinal) {
             if (!processed.has(i)) {
-              processed.add(i); final += result[0].transcript.trim() + ' ';
-              segments.push(Array.from(result).map(r => r.transcript.trim()).filter(Boolean));
+              processed.add(i);
+              const best = result[0].transcript.trim();
+              if (best) {
+                final += best + ' ';
+                segments.push([best, ...Array.from(result).slice(1).map(r => r.transcript.trim()).filter(Boolean)]);
+              }
             }
           } else provisional += result[0].transcript;
         }
@@ -111,7 +115,7 @@
         cancel((messages[event.error] || '음성인식을 완료하지 못했습니다.') + ' 확정된 초안은 유지됩니다. 직접 입력하거나 다시 시도해 주세요.');
       };
       current.onend = () => {
-        if (ticket !== generation) return;
+        if (ticket !== generation || !listening) return;
         listening = false; finishing = false; recognition = null; clearInterim();
         if (!failed) {
           showProblem = unresolved || !segments.length;

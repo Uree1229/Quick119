@@ -282,7 +282,7 @@
   let draftSession;
   const items = new Map(), unread = new Set(), controllers = new Set();
   // Presentation only: rendered order, map-pin signature and candidate cards (never sent anywhere).
-  let renderedEntryKeys = [], candidateSignature = '[]', hospitalRenderSignature = '', caseOrigin = null;
+  let renderedEntryKeys = [], candidateSignature = '[]', hospitalRenderSignature = '', caseOrigin = null, overviewShown = false;
   const candidateCards = new Map();
   const inquiryLabels = {PENDING: '수용 문의 중', CHECKING: '의료진 확인 중', ACCEPTED: '수용 가능 응답', CONFIRMED: '목적지 확정',
     DECLINED: '수용 불가', EXPIRED: '수용 응답 만료', CANCELLED: '문의 종료'};
@@ -298,8 +298,9 @@
   const adjustmentEndTypes = new Set(['destination_changed', 'hospital_keeps', 'patient_cancelled']);
   const outcomeTypes = new Set(['destination_changed', 'destination_confirmed', 'departed',
     'arrival_confirmed', 'patient_cancelled', 'hospital_keeps']);
-  const protectedNoticeTypes = new Set(['patient_updated', 'patient_information_amended', 'inquiry_question',
+  const protectedNoticeTypes = new Set(['inquiry_question',
     'enroute_patient_change_requested', 'enroute_patient_change_decided']);
+  const routineReplies = new Set(['확인한 환자 정보를 반영했습니다.', '현재 버전의 환자 정보를 확정했습니다.']);
   function el(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -386,7 +387,7 @@
       setCurrentPatient(patient.id);
       await pollNow();
     } else {
-      controls();
+      renderHospitals();
     }
   }
   function bootstrapTransport() {
@@ -456,6 +457,13 @@
   function adjustmentIsOpen() {
     return latestOpenAdjustmentStart() > 0;
   }
+  function currentAdjustmentReason() {
+    const lastEnd = Math.max(0, ...[...items.values()]
+      .filter(item => adjustmentEndTypes.has(item.type)).map(eventOrder));
+    const notice = [...items.values()].reverse()
+      .find(item => item.type === 'adjustment_needed' && eventOrder(item) > lastEnd);
+    return typeof notice?.data?.note === 'string' ? notice.data.note.trim() : '';
+  }
   function inquirySummary(group) {
     const seen = new Set();
     const updates = [];
@@ -505,7 +513,8 @@
     return group[group.length - 1].text;
   }
   function noticeEmphasis(group, prompt) {
-    if (prompt || group.some(item => outcomeTypes.has(item.type) || item.type === 'transport_inquiry_ready')) return 'decision';
+    if (prompt) return 'action';
+    if (group.some(item => outcomeTypes.has(item.type) || item.type === 'transport_inquiry_ready')) return 'decision';
     if (group.some(item => adjustmentStartTypes.has(item.type))) return 'adjustment';
     if (group.some(item => item.type === 'transport_recheck_required')) return 'attention';
     return 'progress';
@@ -516,7 +525,8 @@
     const headlineText = noticeHeadline(group, isLatest);
     const prompt = headlineText.endsWith('새 목적지를 확정하세요');
     const reasonNotice = [...group].reverse().find(item => item.type === 'adjustment_needed');
-    const reason = typeof reasonNotice?.data?.note === 'string' ? reasonNotice.data.note.trim() : '';
+    const reason = prompt ? currentAdjustmentReason()
+      : typeof reasonNotice?.data?.note === 'string' ? reasonNotice.data.note.trim() : '';
     const last = group[group.length - 1];
     const signature = JSON.stringify([group.map(item => [item.id, item.text, item.type]), headlineText, reason]);
     let node = document.getElementById(nodeId);
@@ -568,7 +578,7 @@
     const button = el('button', 'tw-confirm-control tw-btn-confirm', label); button.type = 'button';
     button.dataset.transportConfirm = String(inquiry.id); button.dataset.hospitalId = inquiry.hospital_id;
     const name = inquiry.hospital_name || hospital?.name || inquiry.hospital_id;
-    const accessibleLabel = label === '새 목적지로 확정' ? label : `${name}으로 목적지 확정`;
+    const accessibleLabel = label === '새 목적지로 확정' ? `${name}을(를) 새 목적지로 확정` : `${name}으로 목적지 확정`;
     button.setAttribute('aria-label', accessibleLabel);
     button.title = accessibleLabel;
     button.addEventListener('click', () => runOperation(async () => {
@@ -618,10 +628,12 @@
       ? renderedEntryKeys.length : 0;
     let previous = null;
     const latestGroup = entries.filter(entry => entry.group).at(-1);
+    const visibleNodes = new Set();
     entries.forEach((entry, index) => {
       const node = entry.group
         ? renderNoticeGroup(entry.group, entry === latestGroup)
         : (document.getElementById('transport-item-' + entry.item.id) || messageNode(entry.item));
+      visibleNodes.add(node);
       if (entry.item) {
         const group = `${entry.item.sender_role}|${entry.item.sender_name || ''}`;
         node.dataset.cont = String(!!group && previous?.group === group && entry.item.at - previous.at < 300);
@@ -630,6 +642,7 @@
       const parent = node.parentNode || node.parent;
       if (index >= kept || parent !== $('messages')) $('messages').append(node);
     });
+    for (const node of [...$('messages').children]) if (!visibleNodes.has(node)) node.remove();
     renderedEntryKeys = keys;
     if (chatVisible() && follow) { $('messages').scrollTop = $('messages').scrollHeight; markRead(); }
     else $('messages').scrollTop = scrollTop;
@@ -651,7 +664,8 @@
           items.set(id, {id, kind: 'command', sender_role: 'patient', sender_name: '구급대원',
             text: item.data.command_text, at: item.at, order_key: item.order_key});
         }
-        items.set(item.id, {...item, type: null, text: item.data.reply, order_key: [...item.order_key, 1]});
+        items.set(item.id, {...item, type: routineReplies.has(item.data?.reply) ? item.type : null,
+          text: item.data.reply, order_key: [...item.order_key, 1]});
       } else items.set(item.id, item);
       if (countNew && item.kind === 'message' && item.sender_role === 'hospital' && !following) unread.add(item.id);
     }
@@ -836,25 +850,33 @@
       const hospital = hospitals.find(item => item.id === inquiry.hospital_id);
       if (hospital) { displayed.push({...hospital, hospital_id: hospital.id, id: hospital.id}); ids.add(hospital.id); }
     }
+    if (!displayed.length && patientListLoaded && !snapshot?.active_hospital_session)
+      return hospitals.slice(0, 3).map(hospital => ({...hospital, overview: true, reference: true}));
     return displayed;
   }
   function renderHospitals() {
     const displayed = displayedHospitals();
-    const signature = JSON.stringify([snapshot?.active_hospital_session?.hospital_id || '',
+    const overview = displayed.some(hospital => hospital.reference);
+    $('hospitals-title').textContent = overview ? '시연 병원' : '후보 병원';
+    if (overview) $('hospital-status').textContent = '환자 조건과 무관한 시연 병원입니다. 수용 여부는 확인되지 않았습니다.';
+    else if (overviewShown) $('hospital-status').textContent = snapshot?.active_hospital_session
+      ? '목적지가 확정됐습니다.' : '환자 정보를 확인한 뒤 병원 탐색을 시작해 주세요.';
+    overviewShown = overview;
+    const signature = JSON.stringify([overview, snapshot?.active_hospital_session?.hospital_id || '',
       displayed.map(hospital => {
         const inquiry = (snapshot?.inquiries || []).find(q => q.hospital_id === hospital.id);
         return [hospital.id, hospital.lat, hospital.lon, hospital.travel?.duration_seconds,
-          inquiry?.state || '', !!inquiry?.usable];
+          inquiry?.state || '', !!inquiry?.usable, !!hospital.overview];
       })]);
     if (signature === hospitalRenderSignature) { renderCandidateStates(); return; }
     hospitalRenderSignature = signature;
     $('hospitals').replaceChildren(); candidateCards.clear();
     displayed.forEach((hospital, index) => {
       const card = el('article', 'transport-hospital'); card.id = 'transport-cand-' + hospital.id;
-      card.dataset.candidateId = hospital.id;
+      if (!hospital.reference) card.dataset.candidateId = hospital.id;
       const rank = el('span', 'tw-rank', String(index + 1)); rank.setAttribute('aria-hidden', 'true');
       const titles = el('div', 'tw-cand-titles');
-      titles.append(el('span', 'tw-sr', `${index + 1}순위 후보 `));
+      titles.append(el('span', 'tw-sr', hospital.overview ? '병원 ' : `${index + 1}순위 후보 `));
       const bed = bedFor(hospital.id), meters = Number(hospital.travel?.distance_meters);
       const facts = [bed ? `시연 병상 여유 ${bed.free}${Number.isFinite(bed.capacity) ? '/' + bed.capacity : ''}` : null,
         meters > 0 ? `${(meters / 1000).toFixed(1)} km` : null, hospital.resources_enough === false ? '자원 확인 필요' : null].filter(Boolean);
@@ -865,22 +887,20 @@
       const eta = el('p', 'tw-eta');
       eta.append(el('strong', '', Number.isFinite(seconds) && seconds >= 0 ? `${Math.max(1, Math.floor(seconds / 60))}분` : '—'),
         el('small', '', '가상 이동'));
-      const head = el('div', 'tw-cand-head'); head.append(rank, titles, eta);
+      const route = el('button', 'tw-btn tw-btn-ghost tw-cand-route', '경로'); route.type = 'button';
+      route.setAttribute('aria-label', `${hospital.name} 경로`);
+      route.addEventListener('click', () => selectRoute(hospital));
+      const side = el('div', 'tw-cand-side'); side.append(eta, route);
+      const head = el('div', 'tw-cand-head'); head.append(rank, titles, side);
       const notes = [...(hospital.reasons || []), ...(hospital.checks || [])].map(readable);
       const why = el('details', 'tw-cand-why');
       const list = el('ul');
       for (const note of notes) list.append(el('li', '', note));
       why.append(el('summary', '', `판단 근거 · 확인 사항 ${notes.length}건`), list);
       why.hidden = !notes.length;
-      const route = el('button', 'tw-btn tw-btn-ghost tw-cand-route', '경로'); route.type = 'button';
-      route.setAttribute('aria-label', `${hospital.name} 경로`);
-      route.addEventListener('click', () => selectRoute(hospital));
-      const actions = el('div', 'tw-cand-actions'); actions.append(route);
-      const link = el('a', 'tw-cand-link', '의료진 화면 열기 ↗');
-      link.href = '/hospital/?hid=' + encodeURIComponent(hospital.id) + (pid ? '&pid=' + encodeURIComponent(pid) : '');
-      link.target = '_blank'; link.rel = 'noopener noreferrer';
-      card.append(head, why, actions, link); $('hospitals').append(card);
-      candidateCards.set(hospital.id, {card, state, actions, route, link, hospital, actionSignature: ''});
+      const actions = el('div', 'tw-cand-actions');
+      card.append(head, why, actions); $('hospitals').append(card);
+      candidateCards.set(hospital.id, {card, state, actions, hospital, actionSignature: ''});
     });
     renderCandidateStates();
     announceCandidates();
@@ -922,7 +942,7 @@
   function renderCandidateStates() {
     const latest = new Map((snapshot?.inquiries || []).map(q => [q.hospital_id, q]));
     for (const [id, entry] of candidateCards) {
-      const {card, state, actions, route, link, hospital} = entry;
+      const {card, state, actions, hospital} = entry;
       const q = latest.get(id);
       card.dataset.inquiry = q?.state || '';
       state.hidden = !q; state.dataset.state = q?.state || ''; state.textContent = q ? inquiryLabels[q.state] || q.state : '';
@@ -934,16 +954,21 @@
         const control = isAlternativeAcceptance(q)
           ? changeDestinationButton(q, hospital, '새 목적지로 확정')
           : currentDestination ? confirmedDestinationControl(hospital.name) : null;
-        actions.replaceChildren(route, ...(control ? [control] : []));
+        actions.replaceChildren(...(control ? [control] : []));
         entry.actionSignature = actionSignature;
       }
     }
   }
   // Map pins follow the displayed candidates (top 3) and the case's saved location; no request is made.
   function announceCandidates() {
-    const shown = displayedHospitals().map((h, index) => ({id: h.id, name: h.name, lat: Number(h.lat), lon: Number(h.lon), rank: index + 1}))
+    const displayed = displayedHospitals();
+    if (!displayed.length && snapshot?.active_hospital_session) {
+      const hospital = hospitals.find(item => item.id === snapshot.active_hospital_session.hospital_id);
+      if (hospital) displayed.push({...hospital, overview: true});
+    }
+    const shown = displayed.map((h, index) => ({id: h.id, name: h.name, lat: Number(h.lat), lon: Number(h.lon), rank: index + 1, overview: !!h.overview}))
       .filter(h => Number.isFinite(h.lat) && Number.isFinite(h.lon));
-    const signature = JSON.stringify(shown.map(h => [h.id, h.lat, h.lon]));
+    const signature = JSON.stringify(shown.map(h => [h.id, h.lat, h.lon, h.overview]));
     if (signature === candidateSignature) return;
     candidateSignature = signature;
     document.dispatchEvent(new CustomEvent('quick119:candidates', {detail: {origin: shown.length ? caseOrigin : null, hospitals: shown}}));
@@ -959,6 +984,11 @@
     const alternatives = latestInquiries.filter(q => q.hospital_id !== currentHospital
       && (['PENDING', 'CHECKING'].includes(q.state) || (q.state === 'ACCEPTED' && q.usable)));
     const reassignmentActive = !!currentHospital && adjustmentIsOpen() && alternatives.length > 0;
+    const actionNeeded = reassignmentActive && alternatives.some(isAlternativeAcceptance);
+    const actionAlert = $('action-alert');
+    const reason = currentAdjustmentReason();
+    actionAlert.hidden = !actionNeeded;
+    actionAlert.textContent = actionNeeded ? `대체병원 수용 가능 · 새 목적지를 확정하세요${reason ? ` · 사유: ${reason}` : ''}` : '';
     if (root) root.dataset.reassignmentActive = String(reassignmentActive);
     const currentDestination = $('current-destination');
     if (currentDestination) currentDestination.hidden = !reassignmentActive;
@@ -977,7 +1007,11 @@
     const focusedId = document.activeElement?.dataset.transportConfirm;
     let restoreFocus;
     $('inquiries').dataset.signature = signature; $('inquiries').replaceChildren();
-    if (reassignmentActive) $('inquiries').append(currentDestination);
+    const firstHasAction = reassignmentActive && inquiries[0]?.state === 'ACCEPTED' && inquiries[0]?.usable;
+    const actionKey = firstHasAction ? String(inquiries[0].id) : '';
+    const revealAction = actionKey && $('inquiries').dataset.actionFirst !== actionKey;
+    $('inquiries').dataset.actionFirst = actionKey;
+    if (reassignmentActive && !firstHasAction) $('inquiries').append(currentDestination);
     else $('assignment-meta').append(currentDestination);
     for (const q of inquiries) {
       const name = q.hospital_name || q.hospital_id;
@@ -995,7 +1029,9 @@
         row.append(confirm);
       }
       $('inquiries').append(row);
+      if (firstHasAction && q === inquiries[0]) $('inquiries').append(currentDestination);
     }
+    if (revealAction) $('inquiries').scrollLeft = 0;
     restoreFocus?.focus({preventScroll: true});
     renderHospitals(); renderDestination(); updateAssignmentStripVisibility();
   }
@@ -1273,7 +1309,7 @@
     }}) || null;
   document.addEventListener('quick119:speech-final', event => {
     recognition = event.detail;
-    if (event.detail.submit && (intakeEnabled() || window.Quick119Intake?.isHospitalCall(event.detail.text)) && canCompose()) $('message-form').requestSubmit();
+    if (event.detail.submit && canCompose()) $('message-form').requestSubmit();
   });
   reviewUI = window.Quick119PatientReview?.bind({getState: reviewState, onSearch: searchHospitals,
     openDraft(edit, fallback) {
