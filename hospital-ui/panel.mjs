@@ -30,6 +30,7 @@ let chatPending = null;
 let known = null;                      // 이미 본 새 문의 id (첫 조회는 기준선)
 let sound = null, soundOn = false, lastBeep = 0, errorTimer = null;
 let sig = { threads: '', log: '', actions: '', head: '' }, shownKey = null;
+let finishedOpen = stored('panelFinishedOpen') !== '0';   // 끝난 대화 묶음을 펼쳐 둘지. 고른 대로 기억한다.
 
 const now = () => Date.now() / 1000 + clockOffset;
 const clock = (at) => new Date(at * 1000).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' });
@@ -198,9 +199,10 @@ function render() {
 
 function renderThreads() {
   const list = rows();
-  const next = JSON.stringify([list, loaded]);
+  const next = JSON.stringify([list, loaded, finishedOpen]);
   if (next === sig.threads) return;
   sig.threads = next;
+  const finishedCount = list.filter((row) => row.finished).length;
   const nodes = [];
   if (!list.length) {
     nodes.push(h('p', { class: 'qp-list-empty' }, h('strong', { text: loaded ? '대기 중인 문의가 없습니다' : '불러오는 중' }),
@@ -208,7 +210,16 @@ function renderThreads() {
   }
   let divided = false;
   for (const row of list) {
-    if (row.finished && !divided) { divided = true; nodes.push(h('p', { class: 'qp-list-divider', text: '끝난 대화' })); }
+    if (row.finished && !divided) {
+      divided = true;
+      // 끝난 대화는 한 줄로 접을 수 있다. 접어도 진행 중인 대화의 순서와 배지는 그대로다.
+      nodes.push(h('button', { type: 'button', class: 'qp-list-divider', id: 'finishedToggle', 'aria-expanded': String(finishedOpen),
+        text: `끝난 대화 ${finishedCount}`, onclick: () => {
+          finishedOpen = !finishedOpen; store('panelFinishedOpen', finishedOpen ? '1' : '0');
+          renderThreads(); $('finishedToggle')?.focus();
+        } }));
+    }
+    if (row.finished && !finishedOpen) continue;
     nodes.push(h('button', { type: 'button', class: 'qp-row', 'data-thread': row.key, 'data-finished': String(row.finished), 'aria-pressed': String(row.on),
       'aria-label': `${SEVERITY[row.sev]} · ${row.title} · ${row.status}${row.badge ? ` · 확인할 것 ${row.badge}건` : ''}`, onclick: () => selectThread(row.key) },
     h('span', { class: 'qp-sev', 'data-sev': row.sev, 'aria-hidden': 'true', text: SEVERITY[row.sev] }),
