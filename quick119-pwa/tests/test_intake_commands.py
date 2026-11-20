@@ -32,6 +32,88 @@ class CommandChat(unittest.TestCase):
         self.ctx.body = dict(request_id=str(uuid4()), revision=self.rev, intent=intent)
         return intake.confirm(self.ctx, self.pid)
 
+    def draft(self):
+        return intake.read(self.ctx, self.pid)['draft']
+
+    def accept(self, sid):
+        self.ctx.body = dict(request_id=str(uuid4()), revision=self.rev, suggestion_id=sid)
+        r = intake.accept_suggestion(self.ctx, self.pid)
+        self.rev = r['revision']
+        return r
+
+    def code(self, fn, *args):
+        with self.assertRaises(service.ServiceError) as cm:
+            fn(*args)
+        return cm.exception.code
+
+    def test_misheard_values_are_suggested_but_written_only_after_a_tap(self):
+        self.send('62세 남성, 20분 전부터 흥통 있음, 의식 명료')
+        self.send('혈당 120고')
+        self.send('혈압 1876')
+        draft = self.draft()
+        offers = {(s['field'], s['value']): s for s in draft['suggestions']}
+        self.assertEqual(offers[('symptoms', '흉통')]['note'], '흥통 → 흉통')
+        self.assertEqual(offers[('glucose', 129)]['replaces'], 120)
+        # Nothing is written before the tap: the misheard term stays out, the merged number keeps its reading.
+        self.assertNotIn('symptoms', draft['fields'])
+        self.assertEqual(draft['fields']['glucose'], 120)
+        # 1876 has no single reading, so it is reported for direct input instead of being guessed.
+        self.assertIn({'field': 'systolic_bp', 'note': '원문 1876'}, draft['needs_input'])
+        self.assertFalse(any(s['field'] in ('systolic_bp', 'diastolic_bp') for s in draft['suggestions']))
+        self.accept(offers[('symptoms', '흉통')]['id'])
+        self.accept(offers[('glucose', 129)]['id'])
+        draft = self.draft()
+        self.assertEqual((draft['fields']['symptoms'], draft['fields']['glucose']), (['흉통'], 129))
+        self.assertNotIn(('symptoms', '흉통'), {(s['field'], s['value']) for s in draft['suggestions']})
+        self.assertNotIn(('glucose', 129), {(s['field'], s['value']) for s in draft['suggestions']})
+        self.assertIn('제안값 확정', draft['field_metadata']['symptoms']['evidence'][0])
+
+    def test_disagreeing_hypotheses_suggest_the_first_and_confirm_waits_for_the_tap(self):
+        self.send('62세 남성, 의식 명료')
+        self.send('맥박 90회', source='speech', alternatives=['맥박 19회'])
+        draft = self.draft()
+        pulse = next(s for s in draft['suggestions'] if s['field'] == 'pulse')
+        self.assertEqual((pulse['value'], pulse['note'], pulse['source']), (90, '다른 후보 19', 'alternative'))
+        self.assertNotIn('pulse', draft['fields'])
+        self.assertTrue(any(n['field'] == 'pulse' and n.get('blocking') for n in draft['needs_input']))
+        self.assertEqual(self.code(self.tap, 'confirm'), 'VOICE_RECOGNITION_REVIEW_REQUIRED')
+        self.accept(pulse['id'])
+        draft = self.draft()
+        self.assertEqual(draft['fields']['pulse'], 90)
+        self.assertEqual(draft['needs_input'], [])
+        self.assertTrue(self.tap('confirm')['draft']['confirmed'])
+
+    def test_confirmed_symptom_also_settles_the_disputed_chief_complaint(self):
+        self.send('62세 남성, 의식 명료, 호흡 정상')
+        self.send('호흡곤란 없음', source='speech', alternatives=['호흡곤란 있음'])
+        offer = next(s for s in self.draft()['suggestions'] if s['field'] == 'denied_symptoms')
+        self.assertEqual(offer['value'], '호흡곤란')
+        self.accept(offer['id'])
+        draft = self.draft()
+        self.assertEqual(draft['fields']['denied_symptoms'], ['호흡곤란'])
+        self.assertFalse(any(n['field'] in ('symptoms', 'denied_symptoms', 'uncertain_symptoms')
+                             for n in draft['needs_input']))
+        self.assertFalse(draft['field_metadata'].get('chief_complaint', {}).get('needs_clarification'))
+
+    def test_only_a_current_suggestion_on_the_current_revision_is_accepted(self):
+        self.send('20분 전부터 흥통 있음')
+        offer = next(s for s in self.draft()['suggestions'] if s['field'] == 'symptoms')
+        self.ctx.body = dict(request_id=str(uuid4()), revision=self.rev, suggestion_id='not-a-suggestion')
+        self.assertEqual(self.code(intake.accept_suggestion, self.ctx, self.pid), 'INTAKE_SUGGESTION_GONE')
+        self.ctx.body = dict(request_id=str(uuid4()), revision=[self.rev[0], self.rev[1] - 1], suggestion_id=offer['id'])
+        self.assertEqual(self.code(intake.accept_suggestion, self.ctx, self.pid), 'INTAKE_STALE')
+        self.accept(offer['id'])
+        self.ctx.body = dict(request_id=str(uuid4()), revision=self.rev, suggestion_id=offer['id'])
+        self.assertEqual(self.code(intake.accept_suggestion, self.ctx, self.pid), 'INTAKE_SUGGESTION_GONE')
+
+    def test_spoken_edit_commands_and_later_reports_clear_suggestions(self):
+        self.send('62세 남성, 의식 명료')
+        self.assertEqual(self.send('맥박 92로 수정해 줘')['suggestions'], [])
+        self.send('20분 전부터 흥통 있음')
+        self.assertTrue(any(s['value'] == '흉통' for s in self.draft()['suggestions']))
+        self.send('흉통 있음')
+        self.assertFalse(any(s['value'] == '흉통' for s in self.draft()['suggestions']))
+
     def test_full_report_confirmation_and_retry(self):
         self.send('20세 남성, 흉통 있음, 의식 명료, 호흡 정상')
         self.send('혈압 120에 80, 맥박 92회, 산소포화도 97퍼센트, 체온 37.2도')

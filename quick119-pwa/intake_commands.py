@@ -1,4 +1,5 @@
 """Connect the pinned voice parser to each synthetic crew chat in one transaction."""
+import hashlib
 import json
 import re
 from functools import lru_cache
@@ -13,6 +14,16 @@ from speech_eval.asr_correction import Corrector, numeric_flags
 PATH = r'/api/patients/(?P<pid>Q119-TEST-[A-Za-z0-9-]{1,80})/intake-draft'
 ACTOR = 'quick119-intake'
 require = service._require
+# The twelve review rows. Derived fields (AVPU, age category, chief complaint) follow these automatically.
+SUGGEST_FIELDS = ('age', 'age_group', 'sex', 'symptoms', 'denied_symptoms', 'uncertain_symptoms', 'consciousness',
+                  'breathing', 'systolic_bp', 'diastolic_bp', 'pulse', 'spo2', 'temperature', 'respiratory_rate',
+                  'glucose', 'onset_at')
+LIST_FIELDS = {'symptoms', 'denied_symptoms', 'uncertain_symptoms'}
+# Follow-up question whose derived peers (chief complaint, AVPU, age category) a confirmed value settles.
+PEER_QUESTION = {'symptoms': 'symptoms', 'denied_symptoms': 'symptoms', 'uncertain_symptoms': 'symptoms',
+                 'consciousness': 'consciousness', 'age': 'age', 'age_group': 'age'}
+# Derived fields have no row of their own in the review dialog; a dispute on them shows on this row.
+ROW_OF = {'chief_complaint': 'symptoms', 'seizure_ongoing': 'symptoms', 'avpu': 'consciousness', 'age_category': 'age'}
 
 
 @lru_cache(maxsize=1)
@@ -27,18 +38,110 @@ def latest(ctx, pid):
     return voice_input.get(ctx.conn, ctx.now, row['id'], ACTOR)['session'] if row else None
 
 
+def _replace_spans(text, spans):
+    """Apply (start, end, replacement) from the end so earlier offsets stay valid."""
+    for start, end, new in sorted(spans, reverse=True):
+        text = text[:start] + new + text[end:]
+    return text
+
+
+def suggest(text, alternatives, fields, metadata, now):
+    """Best guesses for values the parser left empty or read one way. A person confirms each in the review dialog.
+
+    Nothing here touches the draft. Sources: a dictionary term near a misheard word, a numeric
+    candidate for a merged token (which may replace the parser's own reading, 120고 -> 120 vs 129),
+    and the first recognition hypothesis when hypotheses disagree.
+    A token with no single plausible reading (혈압 1876) is reported as needing direct input instead.
+    """
+    disputed = {key for key, meta in metadata.items()
+                if meta.get('needs_clarification') and meta.get('recognition_context')}
+    variants = []
+    terms = corrector().suggest(text)
+    if terms:
+        variants.append(('term', _replace_spans(text, [(t['start'], t['end'], t['replacement']) for t in terms]),
+                         ' · '.join(f"{t['original']} → {t['replacement']}" for t in terms)))
+    flags = numeric_flags(text)
+    fixed = [f for f in flags if type(f.get('candidate')) in (int, float)]
+    if fixed:
+        variants.append(('numeric', _replace_spans(text, [(f['start'], f['end'], str(f['candidate'])) for f in fixed]),
+                         ' · '.join(f"원문 {f['original']}" for f in fixed)))
+    if alternatives and disputed:
+        variants.append(('alternative', text, None))
+    found = []
+    for source, variant, note in variants:
+        parsed = voice_input._extract(variant, now)['fields']
+        others = {}
+        if source == 'alternative':
+            for alt in alternatives:
+                for key, value in voice_input._extract(alt, now)['fields'].items():
+                    others.setdefault(key, []).append(value)
+        for key in SUGGEST_FIELDS:
+            if key not in parsed:
+                continue
+            if source == 'alternative' and key not in disputed and not (key in LIST_FIELDS and disputed & LIST_FIELDS):
+                continue
+            values = parsed[key] if key in LIST_FIELDS else [parsed[key]]
+            for value in values:
+                replaces = None
+                if key in LIST_FIELDS:
+                    if value in fields.get(key, []):
+                        continue
+                elif key in fields:
+                    # A merged token may already have been read one way (120고 -> 120); offer the other reading.
+                    if source != 'numeric' or fields[key] == value:
+                        continue
+                    replaces = fields[key]
+                item = dict(field=key, value=value, source=source, note=note)
+                if replaces is not None:
+                    item['replaces'] = replaces
+                if source == 'alternative':
+                    rest = [v for v in others.get(key, []) if v != parsed[key]]
+                    item['note'] = ('다른 후보 ' + ', '.join(map(str, rest[:2]))) if rest else '인식 후보가 서로 다름'
+                found.append(item)
+    needs = [dict(field='systolic_bp', note=f"원문 {f['original']}") for f in flags
+             if f.get('kind') == 'merged_blood_pressure' and 'systolic_bp' not in fields]
+    return found, needs
+
+
+def _suggestion_id(item):
+    return hashlib.sha1(json.dumps([item['field'], item['value']], ensure_ascii=False).encode()).hexdigest()[:12]
+
+
 def view(ctx, pid, session):
     if session:
         # Advice is tied to the original utterance and survives reload and a later submit intent.
         rows = ctx.conn.execute("SELECT response FROM voice_requests WHERE actor_id=? AND operation=? "
                                 "AND recorded_at>=? ORDER BY rowid DESC LIMIT 100",
                                 (ACTOR, 'input:' + pid, session['created_at']))
-        hints = []
+        hints, suggested, needs = [], [], []
         for row in rows:
             receipt = json.loads(row['response'])
             if receipt.get('revision', [None])[0] == session['id']:
                 hints.extend(receipt.get('hints', []))
-        return {'asr_hints': list(dict.fromkeys(hints)), **{key: session[key] for key in ('id', 'state', 'version', 'confirmed', 'fields', 'field_metadata',
+                suggested.extend(receipt.get('suggestions', []))
+                needs.extend(receipt.get('needs_input', []))
+        fields, live, seen = session['fields'], [], set()
+        for item in suggested:
+            sid = _suggestion_id(item)
+            if item['field'] in LIST_FIELDS:
+                settled = item['value'] in fields.get(item['field'], [])
+            elif 'replaces' in item:
+                settled = fields.get(item['field']) != item['replaces']   # accepted, or changed another way
+            else:
+                settled = item['field'] in fields
+            if sid in seen or settled:
+                continue
+            seen.add(sid)
+            live.append(dict(item, id=sid))
+        needs = list({n['note']: n for n in needs if n['field'] not in fields}.values())
+        # Values the server will not confirm until a person re-says or edits them (VOICE_RECOGNITION_REVIEW_REQUIRED).
+        for key, meta in session['field_metadata'].items():
+            if meta.get('needs_clarification') and meta.get('recognition_context'):
+                needs.append(dict(field=ROW_OF.get(key, key), note='인식 후보가 서로 다름 · 다시 말하거나 직접 수정',
+                                  blocking=True))
+        needs = list({(n['field'], n['note']): n for n in needs}.values())
+        return {'asr_hints': list(dict.fromkeys(hints)), 'suggestions': live, 'needs_input': needs,
+                **{key: session[key] for key in ('id', 'state', 'version', 'confirmed', 'fields', 'field_metadata',
                                               'warnings', 'followup', 'speak_text', 'latest_changes')}}
 
 
@@ -151,11 +254,18 @@ def input_report(ctx, pid):
         # Phone keyboard dictation arrives through the normal text input too.
         hints.extend(f"인식 원문 ‘{x['original']}’ · 교정 후보 ‘{x['replacement']}’" for x in corrector().suggest(text))
         hints.extend(f"수치 원문 ‘{x['original']}’ 확인 필요" for x in numeric_flags(text))
+        suggestions, needs_input = [], []
+        if result.get('effective_mode') == 'dictation' or data.get('question_id'):
+            # Reports only: an explicit edit command already says the value the crew wants.
+            alternatives = voice_recognition_context.validate(text, data['alternatives']) if data.get('alternatives') else []
+            with voice_terms.use_dictionary(voice_lexicon.snapshot(ctx.conn)):
+                suggestions, needs_input = suggest(text, alternatives, draft['fields'], draft['field_metadata'], ctx.now)
         reply = reply_text(result, session['fields'], question_id=data.get('question_id'))
         system_item = record_reply(ctx, pid, reply, command_text=text if message is None else None)
         return dict(message=message, system_items=[system_item], action=command,
                     effect=result.get('operational_effect'), feedback=feedback,
-                    hints=hints, input_id=key, revision=[draft['id'], draft['version']])
+                    hints=hints, suggestions=suggestions, needs_input=needs_input,
+                    input_id=key, revision=[draft['id'], draft['version']])
     return write(ctx, pid, 'input', apply)
 
 
@@ -181,7 +291,39 @@ def confirm(ctx, pid):
     return write(ctx, pid, 'confirm', apply)
 
 
+def accept_suggestion(ctx, pid):
+    """A person taps 확정 on one suggested value. Only a value the server currently suggests is accepted."""
+    data = ctx.body
+    require(isinstance(data.get('suggestion_id'), str), 'INVALID', '확정할 제안값을 선택하세요.')
+
+    def apply(actor):
+        scope(ctx, pid, editable=True)
+        session = latest(ctx, pid)
+        require(session is not None, 'VOICE_EMPTY_DRAFT', '확인할 초안이 없습니다.', 409)
+        check_version(data, session)
+        chosen = next((s for s in view(ctx, pid, session)['suggestions'] if s['id'] == data['suggestion_id']), None)
+        require(chosen is not None, 'INTAKE_SUGGESTION_GONE', '제안값이 바뀌었습니다. 확인창을 다시 확인하세요.', 409)
+        field, value = chosen['field'], chosen['value']
+        change = list(dict.fromkeys(session['fields'].get(field, []) + [value])) if field in LIST_FIELDS else value
+        evidence = {field: ['제안값 확정' + (f" ({chosen['note']})" if chosen.get('note') else '')]}
+        with voice_terms.use_dictionary(voice_lexicon.snapshot(ctx.conn)):
+            row = voice_input._row(ctx.conn, session['id'], actor, ctx.now)
+            voice_input._mutable(row, session['version'])
+            # Same steps as a manual correction (voice_input._edit), plus the peer reset a follow-up answer
+            # applies, so a confirmed symptom also settles the derived chief complaint it was disputed with.
+            fields, meta = voice_input._merge(row, voice_terms.normalize_fields({field: change}), evidence,
+                                              ctx.now, 'manual', 'correction', replace=True)
+            if PEER_QUESTION.get(field):
+                voice_input._recognition_peer_reset(fields, meta, PEER_QUESTION[field], ctx.now)
+            voice_input._advance(ctx.conn, ctx.now, row, fields, meta, json.loads(row['warnings']), 'correction')
+        current = latest(ctx, pid)
+        return {'accepted': {key: chosen[key] for key in ('id', 'field', 'value')},
+                'revision': [current['id'], current['version']]}
+    return write(ctx, pid, 'suggestion', apply)
+
+
 def install_routes():
     app.route('GET', PATH)(read)
     app.route('POST', PATH)(input_report)
     app.route('POST', PATH + '/confirm')(confirm)
+    app.route('POST', PATH + '/suggestion')(accept_suggestion)
