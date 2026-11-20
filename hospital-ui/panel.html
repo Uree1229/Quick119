@@ -8,8 +8,9 @@
 </head>
 <body>
 <!-- 병원이 쓰던 화면(EMR 등) 옆에 좁은 창·사이드패널·iframe으로 띄우는 채팅형 패널.
+     메신저처럼 왼쪽에 환자 대화 목록, 오른쪽에 대화를 둔다(좁은 창에서는 목록 → 대화 순으로 연다).
      수용 문의 회신과 이송 대화만 다루고, 자원·수용 제한·운영 도구는 전체 병원 웹(index.html)에 둔다. -->
-<main id="panel" class="qp" data-conn="pending">
+<main id="panel" class="qp" data-conn="pending" data-view="list">
   <header class="qp-head">
     <span class="qp-badge" aria-hidden="true">+</span>
     <div class="qp-head-main">
@@ -33,18 +34,28 @@
     <a id="fullLink" href="./">전체 병원 웹 열기 · 자원, 수용 제한, 운영 도구</a>
   </section>
   <p id="error" class="qp-error" role="alert" hidden></p>
-  <nav id="threads" class="qp-threads" aria-label="환자 대화 목록"></nav>
-  <p id="banner" class="qp-banner" role="status" hidden></p>
-  <section id="log" class="qp-log" role="log" aria-label="선택한 환자와의 대화" tabindex="0"><div id="logInner" class="qp-log-inner"></div></section>
-  <footer class="qp-dock">
-    <div id="actions" class="qp-actions"></div>
-    <form id="composer" class="qp-composer" hidden>
-      <label class="qp-sr" for="message" id="messageLabel">구급대에 보낼 내용</label>
-      <input id="message" type="text" maxlength="1000" autocomplete="off">
-      <button type="submit" id="send" class="qp-send">보내기</button>
-    </form>
-    <p class="qp-synthetic">가상 환자·병원 전용 · 실제 환자정보 입력 금지</p>
-  </footer>
+  <div class="qp-body">
+    <nav id="threads" class="qp-list" aria-label="환자 대화 목록 · 먼저 온 순서"></nav>
+    <section class="qp-chat" aria-label="선택한 환자와의 대화">
+      <div class="qp-chat-head">
+        <button type="button" id="back" class="qp-back" aria-label="대화 목록으로">
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+          <span id="backBadge" class="qp-unread" hidden></span>
+        </button>
+        <div class="qp-chat-title"><strong id="chatTitle"></strong><span id="chatStatus" role="status"></span></div>
+      </div>
+      <section id="log" class="qp-log" role="log" aria-label="대화 내용" tabindex="0"><div id="logInner" class="qp-log-inner"></div></section>
+      <footer class="qp-dock">
+        <div id="actions" class="qp-actions"></div>
+        <form id="composer" class="qp-composer" hidden>
+          <label class="qp-sr" for="message" id="messageLabel">구급대에 보낼 내용</label>
+          <input id="message" type="text" maxlength="1000" autocomplete="off">
+          <button type="submit" id="send" class="qp-send">보내기</button>
+        </form>
+        <p class="qp-synthetic">가상 환자·병원 전용 · 실제 환자정보 입력 금지</p>
+      </footer>
+    </section>
+  </div>
 </main>
 <script type="module" src="panel.mjs"></script>
 </body>

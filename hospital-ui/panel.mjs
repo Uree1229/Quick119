@@ -1,8 +1,10 @@
 // 병원 채팅 패널의 화면과 통신. 기존 병원 웹과 같은 API만 쓰고 새 서버 기능은 만들지 않는다.
+// - 목록: 환자 한 명이 대화 하나. 먼저 온 순서로 두고 중증도 색, 상태, 배지(답할 일 + 안 읽은 메시지)를 보여 준다.
 // - 확정 전: 문의 한 건의 요약 카드, 회신 버튼(수용 가능·확인 중·수용 불가), 추가 질문
 // - 확정 후: 이송 대화, 수용 유지·수용 취소 요청, 환자 도착 확인
-import { buildThreads, threadStatus, summaryFields, severityLabel, patientTitle, acceptBlock, inquiryLog, chatLog,
-  actionCount, needsReview, etaLabel, DECLINE_REASONS } from './panel-state.mjs';
+// - 다른 화면(EMR 등)에 iframe으로 들어가면 건수를 알리고, 같은 출처의 화면과는 대화 열기·침상 안내를 주고받는다.
+import { buildThreads, threadStatus, summaryFields, severityLabel, severityKey, patientTitle, acceptBlock, inquiryLog, chatLog,
+  chatSummary, threadBadge, needsReview, etaLabel, DECLINE_REASONS, SEVERITY } from './panel-state.mjs';
 import { ChatRecoveryStore, newChatRequest, confirmsChatRequest, isRejected } from './chat-recovery.mjs';
 
 const $ = (id) => document.getElementById(id);
@@ -10,6 +12,8 @@ const params = new URLSearchParams(location.search);
 const base = location.origin;
 const POLL_MS = 3000;
 const VOLATILE = new Set(['eta_remaining_seconds', 'elapsed_seconds', 'age_seconds', 'last_checked_at', 'checked_at', 'updated_at']);
+const wide = window.matchMedia('(min-width: 560px)');
+const embedded = window.parent !== window;
 
 function stored(key) { try { return localStorage.getItem(key); } catch { return null; } }
 function store(key, value) { try { localStorage.setItem(key, value); } catch { /* 저장소가 막혀 있으면 이번 화면에서만 유지 */ } }
@@ -19,16 +23,18 @@ try { recovery = new ChatRecoveryStore({ storage: localStorage }); } catch { rec
 let hid = params.get('hid') || 'H01';
 let context = 0;                       // 병원을 바꾸면 늘려서 늦게 온 응답을 버린다
 let inquiries = { open: [], recent: [] }, incoming = [], hospital = null;
-let threads = [], activeKey = null, clockOffset = 0, polling = false, busy = false, loaded = false;
+let threads = [], activeKey = null, view = 'list', clockOffset = 0, polling = false, busy = false, loaded = false;
 let ui = { declineOpen: false, reason: null, cancelOpen: false };
-let chat = null, chatPending = null, chatLoading = false;
+const chats = new Map();               // 대화 키 -> 확정 후 이송 대화(항목, 커서, 마지막으로 본 메시지)
+let chatPending = null;
 let known = null;                      // 이미 본 새 문의 id (첫 조회는 기준선)
 let sound = null, soundOn = false, lastBeep = 0, errorTimer = null;
-let sig = { threads: '', log: '', actions: '' };
+let sig = { threads: '', log: '', actions: '', head: '' }, shownKey = null;
 
 const now = () => Date.now() / 1000 + clockOffset;
 const clock = (at) => new Date(at * 1000).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' });
 const handler = () => $('handler').value.trim();
+const isChatStage = (stage) => stage === 'confirmed' || stage === 'arrived';
 
 function h(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -73,6 +79,9 @@ function openSettings(open) {
 }
 
 const active = () => threads.find((t) => t.key === activeKey) || null;
+const chatOf = (thread) => (thread ? chats.get(thread.key) : null) || null;
+// 대화가 화면에 보이는 중인가: 넓은 창이면 늘, 좁은 창이면 대화 화면일 때만.
+const chatShown = () => !document.hidden && (wide.matches || view === 'chat');
 
 // ---------------------------------------------------------------- 조회
 async function poll() {
@@ -92,72 +101,141 @@ async function poll() {
     setConn('live', '연결됨');
     rebuild();
     alertNew();
-    if (active()?.stage === 'confirmed' || active()?.stage === 'arrived') await pollChat();
+    // 확정된 환자의 대화는 보고 있지 않아도 조회해, 목록에 안 읽은 메시지를 표시한다.
+    for (const thread of threads.filter((t) => t.stage === 'confirmed' || (t.stage === 'arrived' && t.key === activeKey))) {
+      await loadChat(thread, version);
+      if (version !== context) return;
+    }
+    rebuild();
   } catch (error) {
     if (version !== context) return;
     setConn('error', '연결 끊김');
     if (!loaded) showError(error.status ? error.message : '서버에 연결할 수 없습니다. 서버가 켜져 있는지 확인하세요.');
   } finally { polling = false; }
 }
+async function pollNow() { polling = false; await poll(); }
 
-function rebuild() {
-  threads = buildThreads({ open: inquiries.open, recent: inquiries.recent, incoming }, now());
-  if (!active()) { activeKey = threads[0]?.key ?? null; resetThreadUi(); }
-  $('who').textContent = `${hospital?.name || hid} · ${handler() || '담당자 미입력'}`;
-  render();
-  const count = actionCount(threads, now());
-  document.title = (count ? `(${count}) ` : '') + '퀵119 수용 문의';
-  // 이 패널을 iframe으로 품은 화면이 배지를 달 수 있도록 건수만 알린다(환자 정보는 보내지 않는다).
-  if (window.parent !== window) window.parent.postMessage({ source: 'quick119-hospital-panel', pending: count }, '*');
-}
-
-function resetThreadUi() {
-  ui = { declineOpen: false, reason: null, cancelOpen: false };
-  chat = null; chatPending = null; $('message').value = '';
-  sig.log = sig.actions = '';
-}
-
-async function pollChat() {
-  const thread = active();
-  if (!thread || chatLoading) return;
-  const key = thread.key, pid = thread.patientId, version = context;
-  chatLoading = true;
-  if (!chat || chat.key !== key) {
-    chat = { key, items: new Map(), eventCursor: 0, messageCursor: 0, canSend: false, session: null };
-    chatPending = recovery?.load({ server: base, hospital: hid, patient: pid })?.request || null;
-  }
+async function loadChat(thread, version = context) {
+  let chat = chats.get(thread.key);
+  if (!chat) { chat = { key: thread.key, items: new Map(), eventCursor: 0, messageCursor: 0, canSend: false, session: null, seenId: null }; chats.set(thread.key, chat); }
   try {
     for (let page = 0; page < 20; page++) {
-      const result = await api(`/api/hospitals/${encodeURIComponent(hid)}/patients/${encodeURIComponent(pid)}/conversation?event_cursor=${chat.eventCursor}&message_cursor=${chat.messageCursor}&limit=100`);
-      if (version !== context || activeKey !== key) return;
+      const result = await api(`/api/hospitals/${encodeURIComponent(hid)}/patients/${encodeURIComponent(thread.patientId)}/conversation?event_cursor=${chat.eventCursor}&message_cursor=${chat.messageCursor}&limit=100`);
+      if (version !== context) return;
       for (const item of result.items) chat.items.set(item.id, item);
       chat.eventCursor = result.cursors.event_id; chat.messageCursor = result.cursors.message_id;
       chat.canSend = !!result.can_send; chat.session = result.active_hospital_session?.id ?? null;
       if (!result.has_more) break;
     }
-  } catch (error) {
-    if (version === context && activeKey === key) chat.canSend = false;
-  } finally { chatLoading = false; }
-  if (version === context && activeKey === key) render();
+    // 이 화면을 열기 전에 오간 메시지는 읽은 것으로 본다. 그 뒤에 온 것부터 안 읽음으로 센다.
+    if (chat.seenId === null) chat.seenId = chatSummary([...chat.items.values()]).maxId;
+  } catch { chat.canSend = false; }
+}
+
+function markSeen() {
+  const chat = chatOf(active());
+  if (chat && chat.seenId !== null && chatShown()) chat.seenId = chatSummary([...chat.items.values()], chat.seenId).maxId;
+}
+
+function rebuild() {
+  threads = buildThreads({ open: inquiries.open, recent: inquiries.recent, incoming }, now());
+  for (const key of [...chats.keys()]) if (!threads.some((t) => t.key === key)) chats.delete(key);
+  if (!active()) { activeKey = threads[0]?.key ?? null; resetThreadUi(); if (!activeKey) view = 'list'; }
+  $('who').textContent = `${hospital?.name || hid} · ${handler() || '담당자 미입력'}`;
+  markSeen();
+  render();
+  notifyHost();
+}
+
+function rows() {
+  return threads.map((t) => {
+    const chat = chats.get(t.key), status = threadStatus(t, now());
+    const summary = chat ? chatSummary([...chat.items.values()], chat.seenId ?? 0) : { unread: 0, lastAt: null, preview: '' };
+    const q = t.inquiry;
+    return { key: t.key, patientId: t.patientId, title: patientTitle(t.patient), sev: severityKey(t.patient), finished: !!t.finished, stage: t.stage,
+      status: status.text, tone: status.tone, unread: summary.unread, badge: threadBadge(t, now(), summary.unread),
+      sub: summary.unread ? summary.preview : status.text, subTone: summary.unread ? null : status.tone,
+      at: summary.lastAt ?? q?.responded_at ?? q?.created_at ?? null, on: t.key === activeKey };
+  });
+}
+
+// 이 패널을 iframe으로 품은 화면에 알린다. 어느 화면에든 건수만 보내고(환자 정보 없음),
+// 같은 출처의 화면(시연용 가상 EMR)에는 목록 요약도 보낸다.
+function notifyHost(list = rows()) {
+  const pending = list.filter((row) => row.tone === 'alert').length, unread = list.reduce((sum, row) => sum + row.unread, 0);
+  document.title = (pending + unread ? `(${pending + unread}) ` : '') + '퀵119 수용 문의';
+  if (!embedded) return;
+  window.parent.postMessage({ source: 'quick119-hospital-panel', pending, unread }, '*');
+  window.parent.postMessage({ source: 'quick119-hospital-panel', type: 'threads', hospital: hid, threads: threads.map((t, index) => ({
+    patientId: t.patientId, title: list[index].title, age: t.patient.age ?? null, symptoms: t.patient.symptoms || '', stage: t.stage,
+    status: list[index].status, severity: list[index].sev, severityLabel: SEVERITY[list[index].sev], eta: etaLabel(t.patient, now()),
+    canChat: t.stage === 'confirmed' && !!chats.get(t.key)?.canSend })) }, location.origin);
+}
+
+function resetThreadUi() {
+  ui = { declineOpen: false, reason: null, cancelOpen: false };
+  const thread = active();
+  chatPending = thread && isChatStage(thread.stage) ? recovery?.load({ server: base, hospital: hid, patient: thread.patientId })?.request || null : null;
+  $('message').value = '';
+  sig.log = sig.actions = sig.head = '';
+}
+
+function selectThread(key, { show = true } = {}) {
+  if (busy || !threads.some((t) => t.key === key)) return false;
+  if (key !== activeKey) { activeKey = key; resetThreadUi(); }
+  if (show) view = 'chat';
+  sig.threads = '';
+  markSeen(); render(); notifyHost();
+  void pollNow();
+  return true;
 }
 
 // ---------------------------------------------------------------- 그리기
-function render() { renderThreads(); renderLog(); renderActions(); }
+function render() {
+  $('panel').dataset.view = view;
+  renderThreads(); renderHead(); renderLog(); renderActions();
+}
 
 function renderThreads() {
-  const rows = threads.map((t) => ({ key: t.key, title: patientTitle(t.patient), ...threadStatus(t, now()), on: t.key === activeKey }));
-  const next = JSON.stringify(rows);
+  const list = rows();
+  const next = JSON.stringify([list, loaded]);
   if (next === sig.threads) return;
   sig.threads = next;
-  $('threads').replaceChildren(...rows.map((row) => h('button', { type: 'button', class: 'qp-thread', 'aria-pressed': String(row.on),
-    'data-thread': row.key, onclick: () => { if (busy || row.key === activeKey) return; activeKey = row.key; resetThreadUi(); sig.threads = ''; render(); void pollNow(); } },
-  h('strong', { text: row.title }), h('span', { text: row.text, tone: row.tone }))));
+  const nodes = [];
+  if (!list.length) {
+    nodes.push(h('p', { class: 'qp-list-empty' }, h('strong', { text: loaded ? '대기 중인 문의가 없습니다' : '불러오는 중' }),
+      loaded ? '새 수용 문의가 오면 여기에 먼저 온 순서로 쌓입니다.' : ''));
+  }
+  let divided = false;
+  for (const row of list) {
+    if (row.finished && !divided) { divided = true; nodes.push(h('p', { class: 'qp-list-divider', text: '끝난 대화' })); }
+    nodes.push(h('button', { type: 'button', class: 'qp-row', 'data-thread': row.key, 'data-finished': String(row.finished), 'aria-pressed': String(row.on),
+      'aria-label': `${SEVERITY[row.sev]} · ${row.title} · ${row.status}${row.badge ? ` · 확인할 것 ${row.badge}건` : ''}`, onclick: () => selectThread(row.key) },
+    h('span', { class: 'qp-sev', 'data-sev': row.sev, 'aria-hidden': 'true', text: SEVERITY[row.sev] }),
+    h('span', { class: 'qp-row-main' }, h('strong', { text: row.title }),
+      h('span', { class: 'qp-row-line' }, h('span', { class: 'qp-row-sub', text: row.sub, tone: row.subTone }), row.at ? h('time', { text: clock(row.at) }) : null)),
+    row.badge ? h('span', { class: 'qp-unread', text: String(row.badge) }) : null));
+  }
+  $('threads').replaceChildren(...nodes);
+}
+
+function renderHead() {
+  const thread = active(), list = rows();
+  const others = list.filter((row) => row.key !== activeKey).reduce((sum, row) => sum + row.badge, 0);
+  const status = thread ? threadStatus(thread, now()) : null;
+  const next = JSON.stringify([thread?.key, thread && patientTitle(thread.patient), status, others]);
+  if (next === sig.head) return;
+  sig.head = next;
+  $('chatTitle').textContent = thread ? patientTitle(thread.patient) : '대화를 선택하세요';
+  $('chatStatus').textContent = status?.text || '';
+  if (status?.tone) $('chatStatus').dataset.tone = status.tone; else delete $('chatStatus').dataset.tone;
+  $('backBadge').hidden = !others; $('backBadge').textContent = String(others);
+  $('back').setAttribute('aria-label', others ? `대화 목록으로 · 다른 대화에 확인할 것 ${others}건` : '대화 목록으로');
 }
 
 function card(thread) {
   const p = thread.patient, q = thread.inquiry;
-  const source = thread.stage === 'confirmed' || thread.stage === 'arrived' ? '우리 병원으로 확정된 환자'
-    : `수용 문의${q?.created_at ? ' · ' + clock(q.created_at) : ''}`;
+  const source = isChatStage(thread.stage) ? '우리 병원으로 확정된 환자' : `수용 문의${q?.created_at ? ' · ' + clock(q.created_at) : ''}`;
   const fields = summaryFields(p, hospital).map((f) => h('div', { class: 'qp-field', tone: f.tone }, h('dt', { text: f.label }), h('dd', { text: f.value })));
   return h('article', { class: 'qp-card' }, h('div', { class: 'qp-card-src', text: source }),
     h('div', { class: 'qp-card-head' }, h('strong', { text: patientTitle(p) }), h('span', { text: severityLabel(p) })),
@@ -165,31 +243,30 @@ function card(thread) {
 }
 
 function renderLog() {
-  const thread = active();
+  const thread = active(), box = $('log');
   if (!thread) {
     const next = 'empty:' + loaded;
     if (next === sig.log) return;
-    sig.log = next;
-    $('banner').hidden = true;
+    sig.log = next; shownKey = null;
     $('logInner').replaceChildren(h('div', { class: 'qp-empty' }, h('strong', { text: loaded ? '대기 중인 문의가 없습니다' : '불러오는 중' }),
-      loaded ? '새 수용 문의가 오면 여기에 표시됩니다.' : ''));
+      loaded ? '새 수용 문의가 오면 목록에 표시됩니다.' : ''));
     return;
   }
-  const entries = thread.stage === 'confirmed' || thread.stage === 'arrived' ? chatLog(chat?.key === thread.key ? [...chat.items.values()] : [])
-    : inquiryLog(thread.inquiry);
-  const status = threadStatus(thread, now());
-  const banner = thread.stage === 'confirmed' ? { text: status.text, tone: status.tone === 'ok' ? null : status.tone } : null;
+  const chat = chatOf(thread);
+  const entries = isChatStage(thread.stage) ? chatLog(chat ? [...chat.items.values()] : []) : inquiryLog(thread.inquiry);
   // 매 조회마다 바뀌는 경과 시간 값은 빼고 비교해, 읽는 중에 대화가 다시 그려지지 않게 한다.
-  const next = JSON.stringify([thread.key, thread.stage, thread.patient, hospital?.resources, entries, banner],
+  const next = JSON.stringify([thread.key, thread.stage, thread.patient, hospital?.resources, entries],
     (key, value) => (VOLATILE.has(key) ? undefined : value));
   if (next === sig.log) return;
   sig.log = next;
-  $('banner').hidden = !banner;
-  if (banner) { $('banner').textContent = banner.text; if (banner.tone) $('banner').dataset.tone = banner.tone; else delete $('banner').dataset.tone; }
+  const pinned = shownKey !== thread.key || box.scrollHeight - box.scrollTop - box.clientHeight < 48;
+  shownKey = thread.key;
   $('logInner').replaceChildren(card(thread), ...entries.map((entry) => entry.kind === 'notice'
     ? h('p', { class: 'qp-notice', text: entry.text })
     : h('div', { class: 'qp-msg', 'data-kind': entry.kind }, h('p', { text: entry.text }),
       entry.at ? h('small', { text: (entry.kind === 'crew' && entry.sender ? entry.sender + ' · ' : '') + clock(entry.at) }) : null)));
+  // 맨 아래를 보고 있었거나 대화를 바꿨으면 최신 내용으로 내린다. 위를 읽는 중이면 그대로 둔다.
+  if (pinned) box.scrollTop = box.scrollHeight;
 }
 
 function button(label, cls, onclick, extra = {}) { return h('button', { type: 'button', class: 'qp-btn ' + cls, text: label, onclick, disabled: busy, ...extra }); }
@@ -198,10 +275,10 @@ function renderActions() {
   const thread = active();
   const box = $('actions'), composer = $('composer');
   if (!thread) { box.replaceChildren(); composer.hidden = true; sig.actions = ''; return; }
-  const p = thread.patient, q = thread.inquiry, stage = thread.stage;
+  const p = thread.patient, q = thread.inquiry, stage = thread.stage, chat = chatOf(thread);
   const blocked = stage === 'new' || stage === 'checking' ? acceptBlock(p, hospital, now()) : null;
-  const canChat = stage === 'confirmed' && chat?.key === thread.key && (chat.canSend || !!chatPending);
-  const next = JSON.stringify([thread.key, stage, q?.version, ui, busy, blocked, canChat, !!chatPending, p.needs_adjustment, needsReview(p), p.state, etaLabel(p, now())]);
+  const canChat = stage === 'confirmed' && !!chat && (chat.canSend || !!chatPending);
+  const next = JSON.stringify([thread.key, stage, q?.version, ui, busy, blocked, canChat, !!chatPending, p.needs_adjustment, needsReview(p), p.state]);
   if (next === sig.actions) return;
   sig.actions = next;
   const nodes = [];
@@ -210,7 +287,7 @@ function renderActions() {
       nodes.push(h('div', { class: 'qp-form' }, h('h2', { text: '수용 불가 사유' }),
         h('div', { class: 'qp-reasons' }, ...DECLINE_REASONS.map((reason) => h('button', { type: 'button', class: 'qp-chip', text: reason,
           'aria-pressed': String(ui.reason === reason), disabled: busy, onclick: () => { ui.reason = reason; renderActions(); } }))),
-        h('div', { class: 'qp-row' }, button('취소', 'qp-btn-plain', () => { ui.declineOpen = false; ui.reason = null; renderActions(); }),
+        h('div', { class: 'qp-row-actions' }, button('취소', 'qp-btn-plain', () => { ui.declineOpen = false; ui.reason = null; renderActions(); }),
           button(ui.reason ? `수용 불가 · ${ui.reason} 보내기` : '사유를 고르세요', 'qp-btn-danger qp-grow', () => respond('decline', { reason: ui.reason }),
             { disabled: busy || !ui.reason, id: 'declineSend' }))));
     } else {
@@ -221,21 +298,21 @@ function renderActions() {
       if (blocked) nodes.push(h('p', { class: 'qp-note', tone: 'alert', text: blocked + ' 제한이나 자원 정보는 전체 병원 웹에서 바꿉니다.' }));
     }
   } else if (stage === 'accepted') {
-    nodes.push(h('div', { class: 'qp-done', tone: 'wait', role: 'status', text: '수용 가능으로 회신했습니다 · 구급대의 목적지 확정을 기다리는 중' }));
+    nodes.push(h('div', { class: 'qp-done', tone: 'wait', role: 'status', text: '구급대의 목적지 확정을 기다리는 중' }));
   } else if (stage === 'confirmed') {
     if (ui.cancelOpen) {
       nodes.push(h('div', { class: 'qp-form' }, h('h2', { text: '수용 취소 요청 사유' }),
         h('label', { class: 'qp-sr', for: 'cancelNote', text: '수용 취소 요청 사유' }),
         h('input', { id: 'cancelNote', type: 'text', maxlength: '1000', autocomplete: 'off', placeholder: '예: 중환자실 병상이 방금 찼습니다' }),
-        h('div', { class: 'qp-row' }, button('취소', 'qp-btn-plain', () => { ui.cancelOpen = false; renderActions(); }),
+        h('div', { class: 'qp-row-actions' }, button('취소', 'qp-btn-plain', () => { ui.cancelOpen = false; renderActions(); }),
           button('수용 취소 요청 보내기', 'qp-btn-danger qp-grow', () => decide('adjust', $('cancelNote').value.trim())))));
     } else {
       if (needsReview(p)) {
         nodes.push(h('p', { class: 'qp-note', tone: 'alert', text: '이송 중 환자 상태나 조건이 바뀌었습니다. 그대로 받을 수 있는지 확인해 주세요.' }));
-        nodes.push(h('div', { class: 'qp-row' }, button('수용 유지', 'qp-btn-primary qp-grow', () => decide('keep', ''), { 'data-action': 'keep' }),
+        nodes.push(h('div', { class: 'qp-row-actions' }, button('수용 유지', 'qp-btn-primary qp-grow', () => decide('keep', ''), { 'data-action': 'keep' }),
           button('수용 취소 요청', 'qp-btn-decline', () => { ui.cancelOpen = true; renderActions(); }, { 'data-action': 'adjust' })));
       } else {
-        nodes.push(h('div', { class: 'qp-row' }, button('환자 도착 확인', 'qp-btn-primary qp-grow', () => patientAction('arrive'), { 'data-action': 'arrive' }),
+        nodes.push(h('div', { class: 'qp-row-actions' }, button('환자 도착 확인', 'qp-btn-primary qp-grow', () => patientAction('arrive'), { 'data-action': 'arrive' }),
           p.needs_adjustment ? null : button('수용 취소 요청', 'qp-btn-decline', () => { ui.cancelOpen = true; renderActions(); }, { 'data-action': 'adjust' })));
       }
       if (p.needs_adjustment) nodes.push(h('p', { class: 'qp-note', text: '수용 취소를 요청했습니다. 구급대가 새 목적지를 확정할 때까지 목적지는 우리 병원으로 유지됩니다.' }));
@@ -259,17 +336,19 @@ function renderActions() {
 
 // ---------------------------------------------------------------- 동작
 async function run(task) {
-  if (busy) return;
+  if (busy) return false;
   busy = true; sig.actions = ''; renderActions();
+  let ok = true;
   try { await task(); showError(''); }
   catch (error) {
+    ok = false;
     let text = error.message || '요청을 처리하지 못했습니다.';
     if (error.body?.error === 'CONFLICT' || error.status === 409) text = '다른 담당자의 처리나 상태 변경이 먼저 반영됐습니다. 최신 상태를 확인하세요. ' + text;
     if (error.body?.shortfalls?.length) text += ' 부족: ' + error.body.shortfalls.map((s) => s.resource_type).join(', ');
     showError(text);
   } finally { busy = false; sig.actions = ''; await pollNow(); renderActions(); }
+  return ok;
 }
-async function pollNow() { polling = false; await poll(); }
 
 function respond(action, extra = {}) {
   const q = active()?.inquiry;
@@ -308,11 +387,11 @@ function decide(decision, note) {
 }
 
 // 이송 대화 전송. 결과를 확인하지 못한 요청은 보관했다가 같은 요청으로만 다시 보낸다.
-function sendChat() {
-  const thread = active();
-  if (!thread || !chat || chat.key !== thread.key) return;
-  const retry = chatPending, text = $('message').value.trim();
-  if (!retry && (!text || !chat.canSend || !requireHandler())) return;
+function sendChat(text = $('message').value.trim()) {
+  const thread = active(), chat = chatOf(thread);
+  if (!thread || !chat) return false;
+  const retry = chatPending;
+  if (!retry && (!text || !chat.canSend || !requireHandler())) return false;
   const scope = { server: base, hospital: hid, patient: thread.patientId };
   return run(async () => {
     let request = retry;
@@ -344,7 +423,7 @@ function alertNew() {
     const q = added[0];
     try {
       const note = new Notification('새 수용 문의', { body: patientTitle(q.patient), tag: 'quick119-inquiry-' + q.id });
-      note.onclick = () => { window.focus(); activeKey = `p:${q.patient?.id ?? q.patient_id}`; resetThreadUi(); sig.threads = ''; render(); };
+      note.onclick = () => { window.focus(); selectThread(`p:${q.patient?.id ?? q.patient_id}`); };
     } catch { /* 알림을 띄울 수 없는 환경 */ }
   }
   // 답하지 않은 새 문의가 있는 동안 알림음을 되풀이한다. 소리만 끈다고 회신이 되지는 않는다.
@@ -359,6 +438,22 @@ function beep() {
     osc.connect(gain).connect(sound.destination); osc.start(); osc.stop(sound.currentTime + 0.4);
   } catch { /* 소리를 낼 수 없는 환경 */ }
 }
+
+// ---------------------------------------------------------------- 품은 화면(같은 출처)에서 온 요청
+// 시연용 가상 EMR이 보내는 두 가지만 받는다: 대화 열기, 배정한 침상을 구급대에 안내하기.
+window.addEventListener('message', (event) => {
+  if (!embedded || event.source !== window.parent || event.origin !== location.origin) return;
+  const data = event.data;
+  if (!data || data.source !== 'quick119-emr-host' || typeof data.patientId !== 'string') return;
+  const key = 'p:' + data.patientId;
+  if (data.type === 'open') { selectThread(key); return; }
+  if (data.type === 'bed' && typeof data.bed === 'string' && /^[0-9A-Za-z가-힣-]{1,12}$/.test(data.bed)) {
+    if (!selectThread(key)) { showError('이 환자의 대화를 찾지 못해 침상을 안내하지 못했습니다.'); return; }
+    const thread = active(), chat = chatOf(thread);
+    if (thread.stage !== 'confirmed' || !chat?.canSend || chatPending) { showError('지금은 이 환자에게 메시지를 보낼 수 없어 침상을 안내하지 못했습니다.'); return; }
+    void sendChat(`응급실 ${data.bed} 베드로 오세요.`);
+  }
+});
 
 // ---------------------------------------------------------------- 시작
 async function loadHospitals() {
@@ -375,12 +470,14 @@ $('fullLink').href = './?hid=' + encodeURIComponent(hid);
 $('settingsToggle').addEventListener('click', () => openSettings($('settings').hidden));
 $('handler').addEventListener('input', () => { store('handler', handler()); $('who').textContent = `${hospital?.name || hid} · ${handler() || '담당자 미입력'}`; });
 $('hospital').addEventListener('change', () => {
-  hid = $('hospital').value; context++; known = null; loaded = false; activeKey = null; threads = [];
-  inquiries = { open: [], recent: [] }; incoming = []; hospital = null; resetThreadUi(); sig = { threads: '', log: '', actions: '' };
+  hid = $('hospital').value; context++; known = null; loaded = false; activeKey = null; threads = []; view = 'list'; chats.clear();
+  inquiries = { open: [], recent: [] }; incoming = []; hospital = null; resetThreadUi(); sig = { threads: '', log: '', actions: '', head: '' };
   const url = new URL(location.href); url.searchParams.set('hid', hid); history.replaceState(null, '', url);
   $('fullLink').href = './?hid=' + encodeURIComponent(hid);
   render(); void pollNow();
 });
+$('back').addEventListener('click', () => { view = 'list'; render(); $('threads').querySelector('[aria-pressed=true]')?.focus(); });
+wide.addEventListener('change', () => { markSeen(); render(); });
 $('notifyToggle').addEventListener('click', async () => {
   if (!('Notification' in window)) { showError('이 브라우저는 알림을 지원하지 않습니다.'); return; }
   const permission = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission;
@@ -402,10 +499,10 @@ $('composer').addEventListener('submit', (event) => {
     if (question) void respond('question', { question });
   } else void sendChat();
 });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) void poll(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { markSeen(); void poll(); } });
 
 if (!handler()) openSettings(true);
 render();
 await loadHospitals();
 await poll();
-setInterval(() => { void poll(); renderThreads(); }, POLL_MS);
+setInterval(() => { void poll(); renderThreads(); renderHead(); }, POLL_MS);
