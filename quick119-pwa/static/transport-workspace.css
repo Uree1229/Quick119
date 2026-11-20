@@ -657,3 +657,27 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
   #transport-workspace #transport-depart{min-width:0;padding:0 6px;font-size:12px;white-space:nowrap}
   #transport-workspace .tw-switch{gap:4px;padding:0 8px;font-size:13px}
 }
+
+/* ---------- Header colour: a navy bar (the app's theme colour, same as the hospital panel) over a white step strip ---------- */
+#transport-workspace .tw-head{background:linear-gradient(120deg,var(--tw-navy) 30%,var(--tw-navy-2))}
+#transport-workspace .tw-head .tw-title{color:#fff}
+#transport-workspace[data-connection=live] .tw-title::after{background:#3ddc97;box-shadow:0 0 0 3px #3ddc9740}
+#transport-workspace[data-connection=error] .tw-title::after{background:#ff7b7f;box-shadow:0 0 0 3px #ff7b7f40}
+#transport-workspace .tw-head .tw-home-link{background:#ffffff26;color:#fff}
+#transport-workspace .tw-head-row :is(button,a):focus-visible{outline-color:#fff}
+#transport-workspace .tw-head .tw-people li{border-color:#ffffff38;background:#ffffff1f;color:#e8f0fa}
+#transport-workspace .tw-head .tw-people [data-role=system]::before{background:#ff7b7f}
+#transport-workspace .tw-head .tw-people [data-role=crew]::before{background:#8fbcf5}
+#transport-workspace .tw-head .tw-people [data-role=hospital]{border-color:#acd9c2;background:var(--tw-green-soft);color:var(--tw-green)}
+#transport-workspace .tw-head .tw-round{border-color:#ffffff47;background:#ffffff1f;color:#fff;box-shadow:none}
+#transport-workspace .tw-head .tw-tts[aria-pressed=true]{border-color:#fff;background:#fff;color:var(--tw-navy)}
+#transport-workspace .tw-head .tw-switch{background:#fff;color:var(--tw-navy);box-shadow:0 4px 12px #0a1c3559}
+#transport-workspace .tw-head :is(.tw-log-count,.tw-badge){border-color:var(--tw-navy-2)}
+#transport-workspace .tw-head #transport-depart{background:var(--tw-red-2);color:#fff;box-shadow:0 4px 12px #0a1c3559}
+#transport-workspace .tw-steps{padding:7px 16px 7px!important;background:#fff}
+@media(max-width:374px){#transport-workspace .tw-steps{padding:6px 12px 7px!important}}
+/* With the keyboard open only one step stays, drawn straight on the bar so the header keeps its height. */
+#transport-workspace[data-kb=open] .tw-steps{padding:0!important;background:none}
+#transport-workspace[data-kb=open] .tw-steps li{color:#fff}
+#transport-workspace[data-kb=open] .tw-steps [data-state=done] .tw-step-dot{border-color:#fff;background:#fff}
+#transport-workspace[data-kb=open] .tw-steps [data-state=done] .tw-step-dot::before{background:var(--tw-navy)}
