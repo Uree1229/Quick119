@@ -176,15 +176,24 @@ export function inquiryLog(q) {
   return log;
 }
 
+// 구급대에게 하는 안내(접수 시작 안내, 보고 저장 확인)는 병원 패널에 보이지 않는다. 보고 내용 자체는 구급대 말풍선으로 남는다.
+const CREW_ONLY_NOTICES = new Set(['patient_created', 'intake_report_received']);
+// 병원이 읽지 않아도 되는 진행 기록은 '진행 기록 N건'으로 접는다. 내용은 펼치면 그대로 보인다.
+const ROUTINE_NOTICES = new Set(['patient_updated', 'patient_information_amended', 'transport_position_updated',
+  'transport_baseline_captured', 'transport_monitor_started', 'transport_monitor_paused', 'transport_monitor_completed',
+  'inquiry_workflow_batch', 'inquiry_workflow_ready', 'inquiry_workflow_waiting', 'inquiry_workflow_paused',
+  'inquiry_policy_changed', 'inquiry_policy_decided', 'inquiry_skipped_recent_decline']);
+// 서버 공통 문구 중 병원 입장에서 어색한 것만 바꿔 보인다.
+const HOSPITAL_WORDING = { destination_confirmed: '구급대가 우리 병원으로 목적지를 확정했습니다.' };
+
 // 확정 후 대화: 서버 대화 항목을 말풍선으로 바꾼다. 병원이 보낸 것만 내 말풍선이다.
 export function chatLog(items) {
-  return [...items].sort((a, b) => {
+  return [...items].filter((item) => !(item.kind === 'system' && CREW_ONLY_NOTICES.has(item.type))).sort((a, b) => {
     for (let i = 0; i < 3; i++) { const d = (a.order_key?.[i] ?? 0) - (b.order_key?.[i] ?? 0); if (d) return d; }
     return 0;
   }).map((item) => {
-    if (item.kind === 'system') return { kind: 'notice', text: item.text || '', id: item.id, at: item.at,
-      routine: ['patient_updated', 'patient_information_amended'].includes(item.type)
-        || item.text === '이송 관련 기록이 등록됐습니다.' };
+    if (item.kind === 'system') return { kind: 'notice', text: HOSPITAL_WORDING[item.type] || item.text || '', id: item.id, at: item.at,
+      routine: ROUTINE_NOTICES.has(item.type) || item.text === '이송 관련 기록이 등록됐습니다.' };
     return { kind: item.sender_role === 'hospital' ? 'me' : 'crew', text: item.body ?? item.text ?? '', id: item.id, at: item.at, sender: item.sender_name || '' };
   });
 }

@@ -152,3 +152,22 @@ test('목록의 중증도 구분과 배지: 답할 일 1건에 안 읽은 구급
   assert.equal(threadBadge(moving,NOW,2),2);
   assert.equal(threadBadge(moving,NOW),0);
 });
+
+test('구급대에게 하는 안내는 병원 대화에서 빼고, 진행 기록은 접고, 목적지 확정은 병원 입장 문구로 보인다',()=>{
+  const items=[
+    {kind:'system',type:'patient_created',text:'시스템과 구급대의 현장 접수를 시작했습니다. 확인한 환자 상태와 활력징후를 남겨 주세요.',id:'e1',order_key:[1]},
+    {kind:'message',sender_role:'patient',body:'62세 남성 흉통',id:'m1',order_key:[2]},
+    {kind:'system',type:'intake_report_received',text:'현장 보고가 이송 기록에 저장됐습니다.',id:'r1',order_key:[2,0,0,1]},
+    {kind:'system',type:'inquiry_workflow_batch',text:'후보 3곳에 문의했습니다.',id:'e2',order_key:[3]},
+    {kind:'system',type:'destination_confirmed',text:'가상 병원으로 목적지가 확정됐습니다. 병원이 대화에 참여했습니다.',id:'e3',order_key:[4]},
+    {kind:'system',type:'transport_position_updated',text:'이송자의 위치 관측이 갱신됐습니다.',id:'e4',order_key:[5]},
+    {kind:'system',type:'adjustment_needed',text:'조정을 요청했습니다.',id:'e5',order_key:[6]},
+  ];
+  const result=compactChatLog(chatLog(items));
+  assert.deepEqual(result.map(e=>e.kind),['crew','routine-group','notice','routine-group','notice']);
+  const text=JSON.stringify(result);
+  assert.doesNotMatch(text,/현장 접수를 시작했습니다|이송 기록에 저장됐습니다/,'구급대 안내는 보이지 않음');
+  assert.equal(result[1].entries[0].text,'후보 3곳에 문의했습니다.');
+  assert.equal(result[2].text,'구급대가 우리 병원으로 목적지를 확정했습니다.');
+  assert.equal(result[4].text,'조정을 요청했습니다.','행동이 필요한 알림은 접지 않음');
+});
