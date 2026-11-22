@@ -404,6 +404,8 @@
     lastReceivedAt = now;
     gpsStatus(`추적 중 · 정확도 약 ${Math.round(p.accuracy)}m · ${new Date(p.timestamp).toLocaleTimeString('ko-KR')}`);
     moveMarker(p);
+    // 걸러 낸 위치만 알린다. 이송 화면이 확정·이송 중 환자의 위치로 서버에 남겨 병원이 볼 수 있게 한다.
+    document.dispatchEvent(new CustomEvent('quick119:gps-fix', {detail: {lat: p.lat, lon: p.lon, accuracy: p.accuracy, timestamp: p.timestamp}}));
     const nearDestination = p.accuracy <= NAV.ARRIVAL_ACCURACY_M && distance(p, selected) <= NAV.ARRIVAL_M;
     const offRoute = routeCoordinates.length >= 2 && distanceFromRoute(p) > Math.max(NAV.OFF_ROUTE_M, p.accuracy * NAV.ACCURACY_MULTIPLIER);
     // A contradictory fix breaks the sequence even inside the counting interval.

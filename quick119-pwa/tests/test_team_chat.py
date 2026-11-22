@@ -1100,7 +1100,8 @@ class LiveTeamChat(unittest.TestCase):
         self.assertFalse([item for item in staff.call('Target.getTargets')['targetInfos']
                           if item['type'] == 'page' and 'transport-location.html' in item['url']])
         wait(f"{frame}?.getElementById('distance')?.textContent.includes('km')")
-        wait(f"{frame}.getElementById('updated').textContent.includes('기준') && !{frame}.getElementById('refresh').disabled")
+        # GPS가 아직 오지 않은 확정 직후에는 접수 위치라고 밝힌다.
+        wait(f"{frame}.getElementById('updated').textContent.includes('실시간 위치 수신 전') && !{frame}.getElementById('refresh').disabled")
         # The refresh button asks the server again.
         js("window.locationFetches = 0; (() => { const w = document.getElementById('locationFrame').contentWindow, f = w.fetch;"
            " w.fetch = (...a) => { window.locationFetches++; return f.apply(w, a); };"
