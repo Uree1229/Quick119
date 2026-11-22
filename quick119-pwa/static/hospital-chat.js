@@ -780,6 +780,33 @@
     box.hidden = false;
     if ($('intake-feedback')) $('intake-feedback').hidden = true;
   }
+  // 이송 화면 명령의 답은 서버에 보내지 않고, 연락처 칸에 보여 주고 소리로 읽는다.
+  function showLocalAnswer(text) {
+    const box = $('hospital-contact');
+    if (box) { box.replaceChildren(); box.textContent = text; box.hidden = false; contactSession = sessionId(); }
+    if ($('intake-feedback')) $('intake-feedback').hidden = true;
+    speak(text);
+  }
+  function etaAnswer() {
+    const patient = snapshot?.patient, name = snapshot?.active_hospital_session?.hospital_name;
+    if (!patient || !['CONFIRMED', 'IN_TRANSIT'].includes(patient.state) || !name) return '목적지가 아직 확정되지 않았습니다.';
+    if (patient.state === 'CONFIRMED' || !Number.isFinite(patient.eta_at)) return `${name} · 아직 출발 전이라 도착 예정 시간이 없습니다.`;
+    const minutes = Math.max(0, Math.ceil((patient.eta_at * 1000 - Date.now()) / 60000));
+    const at = new Date(patient.eta_at * 1000).toLocaleTimeString('ko-KR', {hour: 'numeric', minute: '2-digit'});
+    return `${name}까지 약 ${minutes}분 · ${at} 도착 예정입니다.`;
+  }
+  function statusAnswer() {
+    const inquiries = snapshot?.inquiries || [];
+    if (!inquiries.length) return '아직 보낸 병원 문의가 없습니다.';
+    return inquiries.map(q => `${q.hospital_name || q.hospital_id} ${inquiryLabels[q.state] || q.state}`).join(', ') + '.';
+  }
+  function runTransportCommand(kind) {
+    if (kind === 'map' || kind === 'chat') {
+      document.dispatchEvent(new CustomEvent('quick119:show-view', {detail: {view: kind === 'map' ? 'gps' : 'chat'}}));
+      return;
+    }
+    showLocalAnswer(kind === 'eta' ? etaAnswer() : statusAnswer());
+  }
   function controls() {
     if ($('hospital-contact') && (!fresh || !active() || contactSession !== sessionId())) $('hospital-contact').hidden = true;
     const staleDraft = draftSession !== undefined && draftSession !== sessionId() && !!$('message').value.trim();
@@ -1223,6 +1250,16 @@
       if (ticket !== epoch || !active()) throw new Error('대화 연결을 다시 확인한 뒤 전송하세요.');
       if (!pending) {
         if (!canCompose() || sessionId() !== session) throw new Error('대화 참여자가 변경됐습니다. 내용을 확인한 뒤 다시 전송하세요.');
+        const local = window.Quick119Intake?.transportCommand?.(composed);
+        if (local) {
+          if (recognition?.text === composed && recognition.alternatives?.some(alt => window.Quick119Intake.transportCommand(alt) !== local)) {
+            recognition = null;
+            throw new Error('명령의 인식 후보가 다릅니다. 내용을 확인한 뒤 다시 눌러 주세요.');
+          }
+          runTransportCommand(local);
+          draftSession = undefined; recognition = null; $('message').value = '';
+          return;
+        }
         if (window.Quick119Intake?.isHospitalCall(composed)) {
           if (recognition?.text === composed && recognition.alternatives?.some(alt => !window.Quick119Intake.isHospitalCall(alt))) {
             recognition = null;
