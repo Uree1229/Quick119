@@ -13,7 +13,7 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
   ttsVoices = [{name: '한국어', lang: 'ko-KR', localService: true, default: true}], audio = false, pcVoice = true,
   intake = false, intakeEffect = null, intakeDraft = null, suggestionDraft = null, viewport = false, embedded = false, conversationPages = [],
   patientCases = null, patientId = 'Q119-TEST-restored', newCase = !restored, hospitalList = null,
-  storage = new Map()} = {}) {
+  storage = new Map(), phraseSupport = false} = {}) {
   const nodes = new Map(), allNodes = new Set(), calls = [], timers = new Map(), speeches = [], utterances = [], audios = [];
   let nextTimer = 0, uuid = 0;
   class Events {
@@ -88,8 +88,9 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
     $('workspace').closest = selector => selector === '.app-shell--workspace' && !embedded ? {} : null;
     document.documentElement = {style: {props: {}, setProperty(name, value) { this.props[name] = value; }, removeProperty(name) { delete this.props[name]; }}};
   }
+  if (phraseSupport) window.SpeechRecognitionPhrase = class { constructor(phrase, boost) { this.phrase = phrase; this.boost = boost; } };
   class Speech {
-    constructor() { speeches.push(this); }
+    constructor() { speeches.push(this); if (phraseSupport) this.phrases = []; }
     start() { this.onstart?.(); }
     stop() { this.stopped = true; }
     abort() { this.aborted = true; }
@@ -747,6 +748,42 @@ test('empty-draft speech submits once on recognition end in intake and hospital 
     speech.onend(); await settle();
     assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 1);
   }
+});
+
+test('speech recognition gets the paramedic term hints only where the browser supports them', async () => {
+  const config = JSON.parse(readFileSync(fileURLToPath(new URL('../../config/paramedic_voice_terms.json', import.meta.url)), 'utf8'));
+  const expected = [...new Set([...config.speech_recognition_hints, ...config.terms.symptoms.map(item => item.canonical), '있음', '없음', '미확인'])];
+
+  const plain = harness({restored: true}); await settle();
+  await plain.$('voice-start').emit('click');
+  assert.equal('phrases' in plain.speeches[0], false, '지원하지 않으면 힌트를 넣지 않음');
+  assert.equal(plain.$('workspace').dataset.speechHints, 'unsupported');
+  assert.deepEqual([...plain.window.Quick119SpeechHints], expected, '용어 설정 파일과 같은 목록');
+
+  const h = harness({restored: true, phraseSupport: true}); await settle();
+  await h.$('voice-start').emit('click');
+  const first = h.speeches[0];
+  assert.deepEqual([...first.phrases].map(p => p.phrase), expected);
+  assert.ok(first.phrases.every(p => p.boost === 1), '기본 세기만 쓴다');
+  assert.ok(expected.length <= 50 && expected.includes('흉통') && expected.includes('있음'));
+  assert.equal(h.$('workspace').dataset.speechHints, 'applied');
+
+  // 브라우저가 힌트를 거부하면 힌트 없이 한 번만 다시 시작하고, 받은 결과는 그대로 쓴다.
+  first.onerror({error: 'phrases-not-supported'});
+  assert.equal(first.aborted, true);
+  const retry = h.speeches[1];
+  assert.ok(retry, '다시 시작함');
+  assert.equal(retry.phrases.length, 0, '다시 시작할 때는 힌트 없음');
+  assert.equal(h.$('workspace').dataset.speechHints, 'rejected');
+  retry.result('흉통 있음', true); retry.onend(); await settle();
+  assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).at(-1)?.body.body, '흉통 있음');
+
+  // 다른 오류는 다시 시작하지 않는다.
+  const other = harness({restored: true, phraseSupport: true}); await settle();
+  await other.$('voice-start').emit('click');
+  other.speeches[0].onerror({error: 'network'});
+  assert.equal(other.speeches.length, 1);
+  assert.match(other.$('voice-status').textContent, /연결하지 못했습니다/);
 });
 
 test('empty or unresolved speech and cancelled sessions never auto-submit', async () => {
