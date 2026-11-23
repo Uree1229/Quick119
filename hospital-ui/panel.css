@@ -92,6 +92,9 @@ button:disabled{cursor:not-allowed}
 .qp-field[data-tone=ok]{background:var(--green-soft)}
 .qp-field[data-tone=alert]{background:var(--red-soft)}
 .qp-field[data-tone=wait]{background:var(--amber-soft)}
+.qp-field[data-wide]{grid-column:1/-1}
+.qp-quick{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.qp-quick .qp-chip{font-weight:600}
 .qp-notice{align-self:center;max-width:92%;padding:4px 12px;border-radius:12px;background:#e3eaf3;color:#3f546c;font-size:12px;font-weight:700;text-align:center;overflow-wrap:anywhere}
 .qp-routine{align-self:center;max-width:92%;color:#697a8c;font-size:11px;text-align:center}
 .qp-routine summary{padding:3px 8px;cursor:pointer}

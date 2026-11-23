@@ -3,7 +3,7 @@
 // - 확정 전: 문의 한 건의 요약 카드, 회신 버튼(수용 가능·확인 중·수용 불가), 추가 질문
 // - 확정 후: 이송 대화, 수용 유지·수용 취소 요청, 환자 도착 확인
 // - 다른 화면(EMR 등)에 iframe으로 들어가면 건수를 알리고, 같은 출처의 화면과는 대화 열기·침상 안내를 주고받는다.
-import { buildThreads, threadStatus, summaryFields, severityLabel, severityKey, patientTitle, acceptBlock, inquiryLog, chatLog, compactChatLog,
+import { buildThreads, threadStatus, summaryFields, QUICK_REPLIES, severityLabel, severityKey, patientTitle, acceptBlock, inquiryLog, chatLog, compactChatLog,
   chatSummary, threadBadge, needsReview, etaLabel, DECLINE_REASONS, SEVERITY } from './panel-state.mjs';
 import { ChatRecoveryStore, newChatRequest, confirmsChatRequest, isRejected } from './chat-recovery.mjs';
 
@@ -269,7 +269,7 @@ function renderHead() {
 function card(thread) {
   const p = thread.patient, q = thread.inquiry;
   const source = isChatStage(thread.stage) ? '우리 병원으로 확정된 환자' : `수용 문의${q?.created_at ? ' · ' + clock(q.created_at) : ''}`;
-  const fields = summaryFields(p, hospital).map((f) => h('div', { class: 'qp-field', tone: f.tone }, h('dt', { text: f.label }), h('dd', { text: f.value })));
+  const fields = summaryFields(p, hospital).map((f) => h('div', { class: 'qp-field', tone: f.tone, 'data-wide': f.wide }, h('dt', { text: f.label }), h('dd', { text: f.value })));
   return h('article', { class: 'qp-card' }, h('div', { class: 'qp-card-src', text: source }),
     h('div', { class: 'qp-card-head' }, h('strong', { text: patientTitle(p) }), h('span', { text: severityLabel(p) })),
     h('dl', { class: 'qp-fields' }, ...fields));
@@ -355,6 +355,11 @@ function renderActions() {
           p.needs_adjustment ? null : button('수용 취소 요청', 'qp-btn-decline', () => { ui.cancelOpen = true; renderActions(); }, { 'data-action': 'adjust' })));
       }
       if (p.needs_adjustment) nodes.push(h('p', { class: 'qp-note', text: '수용 취소를 요청했습니다. 구급대가 새 목적지를 확정할 때까지 목적지는 우리 병원으로 유지됩니다.' }));
+      if (canChat && !chatPending) {
+        nodes.push(h('div', { class: 'qp-quick', role: 'group', 'aria-label': '자주 쓰는 안내' }, ...QUICK_REPLIES.map((text) =>
+          h('button', { type: 'button', class: 'qp-chip', text, 'data-quick': text, disabled: busy,
+            onclick: () => { $('message').value = text; $('message').focus(); } }))));
+      }
     }
   } else {
     const text = stage === 'arrived' ? '환자 도착을 확인했습니다 · 퇴실 처리는 전체 병원 웹에서 합니다'
