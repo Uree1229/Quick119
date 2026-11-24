@@ -107,10 +107,9 @@
     speechStatus('화면을 한 번 터치하면 시스템 메시지 낭독이 시작됩니다.');
   }
   function speak(text) {
-    if (!speechEnabled || !active() || voiceListening
-        || typeof text !== 'string' || !text.trim()) return;
+    if (!speechEnabled || !active() || typeof text !== 'string' || !text.trim()) return;
     speechQueue.push(text.trim());
-    if (speechAudioReady && !speechBusy) drainSpeech();
+    if (speechAudioReady && !speechBusy && !voiceListening) drainSpeech();
   }
   function readSystem(id, text, live) {
     if (consideredSpeech.has(id)) return;
@@ -121,7 +120,7 @@
     speechBusy = true;
     const generation = speechGeneration;
     while (speechQueue.length && generation === speechGeneration) {
-      if (!speechAudioReady) {
+      if (!speechAudioReady || voiceListening) {
         speechBusy = false;
         speechStatus('화면을 한 번 터치하면 시스템 메시지 낭독이 시작됩니다.');
         return;
@@ -1224,10 +1223,6 @@
       if (!pending) {
         if (!canCompose() || sessionId() !== session) throw new Error('대화 참여자가 변경됐습니다. 내용을 확인한 뒤 다시 전송하세요.');
         if (window.Quick119Intake?.isHospitalCall(composed)) {
-          if (recognition?.text === composed && recognition.alternatives?.some(alt => !window.Quick119Intake.isHospitalCall(alt))) {
-            recognition = null;
-            throw new Error('전화 명령의 인식 후보가 다릅니다. 내용을 확인한 뒤 다시 눌러 주세요.');
-          }
           if (session && !hospitals.length) {
             await loadHospitals();
             if (ticket !== epoch || !active() || !fresh || session !== sessionId()) throw new Error('대화 참여자를 다시 확인해 주세요.');
@@ -1281,6 +1276,7 @@
   document.addEventListener('quick119:voice-state', event => {
     voiceListening = !!event.detail.listening;
     if (voiceListening) stopSpeech();
+    if (!voiceListening && speechAudioReady && !speechBusy && speechQueue.length) drainSpeech();
     controls();
   });
   function suspend() {

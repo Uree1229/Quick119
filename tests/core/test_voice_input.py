@@ -81,6 +81,14 @@ class VoiceWorkflow(Base):
         body = self.common(s, utterance_id='partial-command', text='취소', is_final=False, mode='command')
         self.assertEqual(voice.transcript(self.conn, self.now, s['id'], body)['session']['version'], s['version'])
 
+    def test_command_mode_executes_top_hypothesis_with_alternatives(self):
+        s = self.create()
+        body = self.common(s, utterance_id='command-with-alternatives', text='도움말', is_final=True,
+                           mode='command', recognition_alternatives=['환자 상태 정상'])
+        result = voice.transcript(self.conn, self.now, s['id'], body)
+        self.assertEqual(result['command']['action'], 'help')
+        self.assertNotEqual(result.get('operational_effect'), 'voice_command_needs_clarification')
+
     def test_edit_invalidates_confirmation_and_stale_confirm_fails(self):
         s = self.approve(self.dictate(self.create()))
         older = copy.deepcopy(s)

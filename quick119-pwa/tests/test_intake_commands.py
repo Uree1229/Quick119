@@ -156,7 +156,10 @@ class CommandChat(unittest.TestCase):
         self.assertTrue(intake.input_report(self.ctx, self.pid)['hints'])
         self.rev = [intake.read(self.ctx,self.pid)['draft'][k] for k in ('id','version')]
         r = self.send('전송해줘', alternatives=['전송하지 마'])
-        self.assertEqual(r['effect'], 'voice_command_needs_clarification')
+        self.assertEqual(r['effect'], 'explicit_submit_api_required')
+        self.assertEqual(r['action'], 'submit')
+        missing = self.send('뭐 빠졌는지 알려 줘', source='speech', alternatives=['전송하지 마'])
+        self.assertEqual(missing['action'], 'missing')
 
 
     def test_spoken_corrections_preserve_source_and_undo(self):
@@ -179,12 +182,14 @@ class CommandChat(unittest.TestCase):
     def test_ambiguous_corrections_do_not_change_patient(self):
         original = self.send('20세 남성')['draft']['fields']
         for phrase, alternatives in [('남자 아니라 여자일 수도 있어', []), ('보호자가 남자 아니라 여자야', []),
-                                    ('남자가 아니라 여자야?', []), ('남자 말고 여자야', ['남자 말고 남자야']),
-                                    ('20세', ['20세가 아니라 21세야'])]:
+                                    ('남자가 아니라 여자야?', []), ('20세', ['20세가 아니라 21세야'])]:
             with self.subTest(phrase=phrase):
                 result = self.send(phrase, source='speech', alternatives=alternatives)
                 self.assertEqual(result['effect'], 'voice_command_needs_clarification')
                 self.assertEqual(result['draft']['fields'], original)
+        result = self.send('남자 말고 여자야', source='speech', alternatives=['남자 말고 남자야'])
+        self.assertEqual(result['action'], 'edit')
+        self.assertEqual(result['draft']['fields']['sex'], 'female')
 
     def test_child_demographics_and_ambiguous_reports(self):
         for source in ('text', 'speech'):
@@ -248,6 +253,8 @@ class CommandChat(unittest.TestCase):
                 self.assertEqual(self.send(phrase)['effect'], 'explicit_submit_api_required')
         self.assertEqual(self.send('탐색 시작해 줘', source='speech', alternatives=['병원 검색 시작'])['effect'], 'explicit_submit_api_required')
         self.assertEqual(self.send('남자 아니고 여자야', source='speech', alternatives=['남성이 아니라 여성입니다'])['draft']['fields']['sex'], 'female')
+        self.assertEqual(self.send('이 내용으로 확정해줘', source='speech', alternatives=['방금 입력 취소'])['effect'],
+                         'confirmation_requires_tap')
         for phrase, action in [('병원 인계용 요약 보여 줘', 'review'), ('남은 항목이 뭐야', 'missing'),
                                ('이 내용으로 확정해줘', 'confirm')]:
             with self.subTest(phrase=phrase):
