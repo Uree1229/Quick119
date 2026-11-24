@@ -569,12 +569,6 @@ def _utterance(conn, now, row, body, text, provider):
             result.update(command=parsed_control, requested_mode=requested_mode, effective_mode=mode,
                           recognition_context=context)
             return result
-    if 'recognition_alternatives' in body and mode == 'command':
-        return {'session': _public(conn, row), 'is_final': True,
-                'recognition_context': voice_recognition_context.blocked_command(text, body['recognition_alternatives']),
-                'operational_effect': 'voice_command_needs_clarification',
-                'speak_text': '복수 인식 후보가 있는 명령은 실행하지 않았습니다. 원문과 실행할 동작을 다시 확인하세요.',
-                'tts': 'client', 'requested_mode': requested_mode, 'effective_mode': mode}
     if requested_mode == 'auto' and parsed_control.get('rejected'):
         return {'session': _public(conn, row), 'command': parsed_control,
                 'operational_effect': 'voice_command_needs_clarification',

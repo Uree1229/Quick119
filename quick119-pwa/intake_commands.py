@@ -221,15 +221,13 @@ def input_report(ctx, pid):
                 row = voice_input._row(ctx.conn, session['id'], actor, ctx.now)
                 voice_input._mutable(row, session['version'])
                 correction = intake_phrases.correction(text)
-                if correction is None and any(intake_phrases.correction(alt) for alt in common.get('recognition_alternatives', [])):
-                    correction = '', set()
                 if correction is None:
-                    # Equivalent search/confirm variants still lead to an explicit screen tap.
+                    # The leading recognition hypothesis selects a command; the screen still
+                    # handles confirmation, and observation values keep their review hypotheses.
                     alternatives = transcript.get('recognition_alternatives', [])
-                    if alternatives:
-                        action = voice_terms.parse_command(text)['action']
-                        if action in ('submit', 'confirm') and all(voice_terms.parse_command(alt)['action'] == action for alt in alternatives):
-                            del transcript['recognition_alternatives']
+                    action = voice_terms.parse_command(text)['action']
+                    if alternatives and action in ('submit', 'confirm'):
+                        del transcript['recognition_alternatives']
                     result = intake_phrases.handle_input(ctx, row, transcript, text)
                 else:
                     result = intake_phrases.apply_correction(ctx, row, transcript, text, correction)
