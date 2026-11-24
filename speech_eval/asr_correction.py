@@ -25,7 +25,7 @@ _HANGUL = re.compile(r'[가-힣]+')
 _MARKER = r'(?:있\S*|없\S*|의심\S*|미확인\S*|아님|아닌\S*|입니다|임|이다|인가요|하\S*|한\S*|합\S*|해\S*|됨|된\S*|되\S*)'
 _NOUN_TAIL = re.compile(r'(?P<particle>이나|이고|이며|으로|이|가|은|는|을|를|과|와|도|의|만|에|로)?' + _MARKER + r'?')
 _JOINING = frozenset(('과', '와', '이나'))
-# 두 음절 용어는 종류에 맞는 문맥이 바로 뒤에 있거나, 앞에 추가·정정 명령이 있을 때만 제안한다.
+# 두 음절 용어는 단독 증상 보고가 아니면 종류에 맞는 문맥이 있어야 제안한다.
 # 측정 항목 뒤에는 수치, 증상 뒤에는 있음·없음류나 발생 시점('10분 전')이 와야 한다.
 _AFTER = {'measurement': re.compile(r'[0-9]'),
           'symptom': re.compile(r'있|없|의심|미확인|아님|아닌|호소|[0-9]+\s?(?:분|시간|일|주|개월)\s?전')}
@@ -170,7 +170,11 @@ class Corrector:
                 words = written.split()
                 if width > 1 and len(words) > 1 and [s for _, s in window[:-1]] != words[:-1]:
                     continue
-                if n <= 2 and not self._has_context(text, start, end, remainder, tail.group('particle'), self.kinds[compact]):
+                standalone_symptom = (self.kinds[compact] == 'symptom' and not remainder
+                                      and not text[:start].strip(' \t\r\n.,!?')
+                                      and not text[end:].strip(' \t\r\n.,!?'))
+                if n <= 2 and not standalone_symptom and not self._has_context(
+                        text, start, end, remainder, tail.group('particle'), self.kinds[compact]):
                     continue
                 found = dict(start=start, end=end, original=text[start:end], replacement=written + remainder,
                              term=written, distance=score, width=width, heard=joined[:n] if width == 1 else None)
