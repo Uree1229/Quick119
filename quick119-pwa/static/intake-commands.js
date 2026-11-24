@@ -89,6 +89,10 @@
         if (label === '혈압' && (fields.systolic_bp != null || fields.diastolic_bp != null)) {
           dd.textContent = (fields.systolic_bp ?? '미확인') + ' / ' + (fields.diastolic_bp ?? '미확인') + ' mmHg';
         } else dd.textContent = keys.map(key => value(key, fields[key])).filter(Boolean).join(' · ') || '미확인';
+        item.dataset.empty = String(!keys.some(key => {
+          const v = fields[key];
+          return v != null && v !== '' && v !== 'unknown' && (!Array.isArray(v) || v.length > 0);
+        }));
         item.append(dt, dd);
         const offers = open.filter(s => keys.includes(s.field));
         const needs = (draft.needs_input || []).filter(n => keys.includes(n.field));
@@ -195,7 +199,8 @@
       async open(edit, fallback) {
         try {
           if (draft === undefined) await refresh();
-          if (!draft || (!Object.keys(draft.fields).length && !Object.keys(draft.field_metadata).length)) fallback();
+          if (!draft || (!Object.keys(draft.fields).length && !Object.keys(draft.field_metadata).length
+              && !(draft.suggestions || []).length && !(draft.needs_input || []).length)) fallback();
           else draw(edit ? 'search' : 'view');
         } catch (failure) { error(failure.message); }
       }

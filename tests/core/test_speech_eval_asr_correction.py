@@ -80,6 +80,15 @@ class Suggestions(unittest.TestCase):
         self.assertEqual(self.corrector.suggest('어제 경연 대회에 다녀옴'), [])                    # 옆에 임상 문맥이 없음
         self.assertEqual(self.corrected('경연 있음'), '경련 있음')
 
+    def test_standalone_misheard_symptom_is_suggested_without_relaxing_sentence_context(self):
+        self.assertEqual(self.corrected(' 흥통. '), ' 흉통. ')
+        for text in ('흥통', '흥통!', '흥통 때 병원으로 이동', '어제 경연 대회에 다녀옴'):
+            with self.subTest(text=text):
+                self.assertEqual(bool(self.corrector.suggest(text)), text in ('흥통', '흥통!'))
+        self.assertEqual(self.corrector.suggest('이상'), [])
+        self.assertEqual(self.corrector.suggest('고통'), [])
+        self.assertEqual(self.corrector.suggest('채온'), [])
+
     def test_same_misheard_word_is_treated_alike_within_one_utterance(self):
         self.assertEqual(self.corrected('흥통이신 흥통 없은'), '흉통이신 흉통 없은')      # 한 곳만 고치면 있음/없음 충돌이 가려진다
         self.assertEqual(self.corrector.suggest('흥통이신 순환기 내 과로'), [])            # 근거가 된 제안이 없으면 그대로 둔다

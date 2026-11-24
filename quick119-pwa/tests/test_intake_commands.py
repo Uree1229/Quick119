@@ -68,6 +68,20 @@ class CommandChat(unittest.TestCase):
         self.assertNotIn(('glucose', 129), {(s['field'], s['value']) for s in draft['suggestions']})
         self.assertIn('제안값 확정', draft['field_metadata']['symptoms']['evidence'][0])
 
+    def test_standalone_symptom_suggested_for_text_and_speech_with_alternatives(self):
+        self.send('나이 10세')
+        for source, extra in [('text', {}), ('speech', {'alternatives': ['흉통']})]:
+            with self.subTest(source=source):
+                result = self.send('흥통', source=source, **extra)
+                self.assertEqual(result['message']['body'], '흥통')
+                self.assertTrue(any('흥통' in hint and '흉통' in hint for hint in result['hints']))
+                self.assertNotIn('symptoms', result['draft']['fields'])
+                offer = next(s for s in result['draft']['suggestions']
+                             if s['field'] == 'symptoms' and s['value'] == '흉통')
+                self.assertEqual((offer['source'], offer['note']), ('term', '흥통 → 흉통'))
+        self.accept(offer['id'])
+        self.assertEqual(self.draft()['fields']['symptoms'], ['흉통'])
+
     def test_disagreeing_hypotheses_suggest_the_first_and_confirm_waits_for_the_tap(self):
         self.send('62세 남성, 의식 명료')
         self.send('맥박 90회', source='speech', alternatives=['맥박 19회'])

@@ -689,6 +689,7 @@ body:has(#transport-workspace[data-kb=open])>.med-header{position:static}
 #transport-workspace[data-kb=open] .tw-steps [data-state=done] .tw-step-dot{border-color:#fff;background:#fff}
 #transport-workspace[data-kb=open] .tw-steps [data-state=done] .tw-step-dot::before{background:var(--tw-navy)}
 /* Review dialog: suggested values wait for an explicit 확정 (or 빼기) before the draft changes. */
+#transport-command-fields>div[data-empty=false]{border-color:#b9d7ea;background:#edf7fd}
 #transport-command-fields>div[data-suggest=true]{border-color:#f0d29a;background:#fffaf0}
 #transport-command-fields>div[data-needs=true]{border-color:#f3c4c6;background:#fff6f6}
 #transport-command-fields .tw-suggest{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:6px;padding:7px 8px;border-radius:10px;background:#fff1d6}
