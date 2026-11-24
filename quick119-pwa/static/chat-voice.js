@@ -1,4 +1,4 @@
-/* Empty-draft speech sends on recognition end; existing drafts remain editable. */
+/* Final speech recognition results become a draft; sending always stays explicit. */
 (() => {
   'use strict';
   if (!document.getElementById('transport-workspace')) return;
@@ -26,6 +26,11 @@
     document.dispatchEvent(new CustomEvent('quick119:voice-state', {detail: {listening}}));
   }
   function clearInterim() { interim.textContent = ''; interim.hidden = true; }
+  function endedCommand(text) {
+    const value = text.trim();
+    const match = value.match(/(?:^|\s)(완료|그만)[.!?。…]*$/u);
+    return match ? {command: true, text: value.slice(0, match.index).trimEnd()} : {command: false, text: value};
+  }
   function cancel(message) {
     if (!listening) return;
     const old = recognition;
@@ -68,28 +73,31 @@
     const auto = emptyAtStart;
     showProblem = false;
     const segments = [];
-    let failed = false, unresolved = false;
+    let failed = false, unresolved = false, commandRequested = false, ended = false;
     try {
       const current = new Speech();
       recognition = current;
       current.lang = 'ko-KR'; current.continuous = !auto; current.interimResults = true; current.maxAlternatives = 3;
       current.onstart = () => {
         if (ticket !== generation || !listening) return;
-        status.textContent = auto ? '말씀해 주세요. 인식이 끝나면 자동으로 보냅니다.' : '듣고 있습니다. 인식된 내용을 확인한 뒤 보내세요.';
+        status.textContent = auto ? '환자 상태나 명령을 말해 주세요. 인식이 끝나면 접수에 반영합니다.' : '듣고 있습니다. 인식된 내용을 확인한 뒤 보내세요.';
       };
       current.onresult = event => {
         if (ticket !== generation || !listening) return;
-        let provisional = '', final = '';
+        let provisional = '', final = '', stopRequested = false;
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const result = event.results[i];
           if (result.isFinal) {
             if (!processed.has(i)) {
               processed.add(i);
-              const best = result[0].transcript.trim();
-              if (best) {
-                final += best + ' ';
-                segments.push([best, ...Array.from(result).slice(1).map(r => r.transcript.trim()).filter(Boolean)]);
+              const choices = Array.from(result).map(r => r.transcript.trim()).filter(Boolean);
+              const primary = endedCommand(choices[0] || '');
+              final += primary.text ? primary.text + ' ' : '';
+              if (primary.text) {
+                const normalized = choices.map(choice => endedCommand(choice).text).filter(Boolean);
+                segments.push(normalized.length ? normalized : [primary.text]);
               }
+              if (primary.command) stopRequested = commandRequested = true;
             }
           } else provisional += result[0].transcript;
         }
@@ -106,6 +114,12 @@
         unresolved = !!provisional.trim();
         interim.textContent = provisional ? '인식 중 · 아직 초안에 반영하지 않음: ' + provisional : '';
         interim.hidden = !provisional;
+        if (stopRequested) {
+          finishing = true;
+          status.textContent = input.value.trim() ? '음성 명령을 확인했습니다. 전송 중…' : '음성 입력을 마쳤습니다.';
+          render();
+          try { current.stop(); } catch (_) { current.onend(); }
+        }
       };
       current.onerror = event => {
         if (ticket !== generation) return;
@@ -115,14 +129,16 @@
         cancel((messages[event.error] || '음성인식을 완료하지 못했습니다.') + ' 확정된 초안은 유지됩니다. 직접 입력하거나 다시 시도해 주세요.');
       };
       current.onend = () => {
-        if (ticket !== generation || !listening) return;
+        if (ticket !== generation || ended) return;
+        ended = true;
         listening = false; finishing = false; recognition = null; clearInterim();
         if (!failed) {
           showProblem = unresolved || !segments.length;
           status.textContent = showProblem ? '인식이 끝난 내용을 확인하거나 다시 말해 주세요.' : '';
         }
         announce(); render();
-        if (!failed && segments.length && !unresolved) {
+        const text = input.value.trim();
+        if (!failed && !unresolved && text && (segments.length || commandRequested)) {
           const alternatives = [];
           for (const [i, segment] of segments.entries()) {
             for (const other of segment.slice(1)) {
@@ -130,9 +146,9 @@
               if (phrase !== input.value.trim() && !alternatives.includes(phrase)) alternatives.push(phrase);
             }
           }
-          const contact = emptyAtStart && window.Quick119Intake?.isHospitalCall(input.value.trim());
+          const contact = emptyAtStart && window.Quick119Intake?.isHospitalCall(text);
           document.dispatchEvent(new CustomEvent('quick119:speech-final', {detail: {
-            text: input.value.trim(), alternatives: auto || contact ? alternatives : [], submit: auto || !!contact
+            text, alternatives, submit: commandRequested || auto || !!contact
           }}));
         }
       };

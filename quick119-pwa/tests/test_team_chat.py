@@ -846,7 +846,8 @@ class LiveTeamChat(unittest.TestCase):
 
         def say(text, alternatives=()):
             js("document.querySelector('#transport-voice-start').click()")
-            js(f"mic.emit({json.dumps(text)},true,{json.dumps(alternatives)}); mic.stop()")
+            js(f"mic.emit({json.dumps(text)},true,{json.dumps(alternatives)});"
+               "mic.onend()")
             wait("!document.querySelector('#transport-message').value && !document.querySelector('#transport-send').disabled")
 
         ready = "document.querySelector('#transport-voice-start:enabled') && new URLSearchParams(location.search).has('pid')"
@@ -879,7 +880,7 @@ class LiveTeamChat(unittest.TestCase):
         def draft():
             return self.call('GET', route + '/intake-draft')['draft']
 
-        js("document.querySelector('#transport-voice-start').click(); mic.emit('전송해줘',false); mic.stop()")
+        js("document.querySelector('#transport-voice-start').click(); mic.emit('전송해줘',false); mic.onend()")
         self.assertIsNone(draft())
         say(report)
         wait(bubble_texts + '.includes(' + json.dumps(receipt) + ')')
@@ -888,8 +889,13 @@ class LiveTeamChat(unittest.TestCase):
         self.assertEqual(draft()['fields']['sex'], 'male')
         say('나이 21세로 수정해줘')
         self.assertEqual(draft()['fields']['age'], 21)
+        # The leading hypothesis picks the command. A differing hypothesis no longer blocks it:
+        # this only opens the review sheet, and nothing is sent until the crew taps confirm.
         say('전송해줘', ['전송하지 마'])
-        self.assertFalse(js("document.querySelector('#transport-command-panel').open"))
+        wait("document.querySelector('#transport-command-panel').open")
+        self.assertIsNone(self.call('GET', route)['age'])
+        js("document.querySelector('#transport-command-close').click()")
+        wait("!document.querySelector('#transport-command-panel').open")
         say('전송해줘')
         wait("document.querySelector('#transport-command-panel').open")
         self.assertGreaterEqual(js("document.querySelector('#transport-command-confirm').getBoundingClientRect().height"), 48)
@@ -908,11 +914,16 @@ class LiveTeamChat(unittest.TestCase):
         wait("document.querySelector('#transport-participants [data-role=hospital]')")
         js("document.querySelector('[data-workspace-view=chat]').click()")
         wait("document.querySelector('#transport-voice-start:enabled')")
+        js("document.querySelector('#transport-message').value='기존 입력 초안';"
+           "document.querySelector('#transport-message').dispatchEvent(new Event('input'))")
         js("document.querySelector('#transport-voice-start').click()")
-        self.assertFalse(js('mic.continuous'))
-        js("mic.emit('가상 병원 음성 보고', true); mic.onend(); mic.onend()")
-        wait(bubble_texts + ".includes('가상 병원 음성 보고')")
-        self.assertEqual(js(bubble_texts + ".filter(text => text === '가상 병원 음성 보고').length"), 1)
+        self.assertTrue(js('mic.continuous'))
+        self.assertTrue(js("document.querySelector('#transport-voice-start').disabled &&"
+                           "!document.querySelector('#transport-voice-stop').hidden"))
+        js("mic.emit('가상 병원 음성 보고 그만', true); mic.onend(); mic.onend()")
+        self.assertTrue(js("document.querySelector('#transport-voice-stop').hidden"))
+        wait(bubble_texts + ".includes('기존 입력 초안 가상 병원 음성 보고')")
+        self.assertEqual(js(bubble_texts + ".filter(text => text === '기존 입력 초안 가상 병원 음성 보고').length"), 1)
 
     def test_typing_mode_keeps_the_chat_visible_on_a_short_phone(self):
         from chrome_driver import Chrome

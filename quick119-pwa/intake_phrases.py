@@ -123,7 +123,9 @@ def unavailable_field(text):
 
 
 def handle_input(ctx, row, body, text):
-    variants = [text, *body.get('recognition_alternatives', [])]
+    top_command = voice_terms.parse_command(text)
+    variants = ([text, *body.get('recognition_alternatives', [])]
+                if top_command['action'] in ('observe', 'unknown') else [text])
     action = None
     mode = 'command'
     unavailable = [unavailable_field(phrase) for phrase in variants]
@@ -164,10 +166,7 @@ def apply_correction(ctx, row, body, text, parsed):
     replacement, fields = parsed
     if replacement:
         extracted = voice_input._extract(replacement, now, row)
-        variants = [correction(alt) for alt in body.get('recognition_alternatives', [])]
-        if set(extracted['fields']) == fields and all(
-                variant and variant[1] == fields and voice_input._extract(variant[0], now, row)['fields'] == extracted['fields']
-                for variant in variants):
+        if set(extracted['fields']) == fields:
             result = voice_input._edit(conn, now, row, extracted['fields'], [], 'correction',
                                        'voice_command', {key: [text] for key in fields}, extracted['warnings'])
             return dict(result, command={'action': 'edit'}, effective_mode='command', extraction=extracted,

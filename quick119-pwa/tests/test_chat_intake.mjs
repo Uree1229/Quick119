@@ -93,8 +93,8 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
     start() { this.onstart?.(); }
     stop() { this.stopped = true; }
     abort() { this.aborted = true; }
-    result(text, isFinal, index = 0) {
-      const result = [{transcript: text}]; result.isFinal = isFinal;
+    result(text, isFinal, index = 0, alternatives = []) {
+      const result = [text, ...alternatives].map(transcript => ({transcript})); result.isFinal = isFinal;
       const results = Array.from({length: index + 1}, () => Object.assign([{transcript: ''}], {isFinal: false})); results[index] = result;
       this.onresult?.({resultIndex: index, results});
     }
@@ -730,24 +730,77 @@ test('an ambiguous private send retries the same null scope and request id after
   assert.equal(h.$('message').value, '');
 });
 
-test('empty-draft speech submits once on recognition end in intake and hospital chat', async () => {
-  for (const hospital of [false, true]) {
-    const h = harness({restored: true});
-    await settle();
-    if (hospital) { h.join(); await h.poll(); }
+test('browser end closes recognition; empty input auto-submits and an existing draft stays manual', async () => {
+  const intake = harness({restored: true, intake: true}); await settle();
+  await intake.$('voice-start').emit('click');
+  assert.equal(intake.speeches[0].continuous, false);
+  intake.speeches[0].result('호흡 정상', true); intake.speeches[0].onend(); await settle();
+  assert.equal(intake.calls.filter(call => call.url.endsWith('/intake-draft') && call.method === 'POST').length, 1);
+  assert.equal(intake.$('workspace').dataset.voice, 'idle');
+
+  const hospital = harness({restored: true}); await settle();
+  hospital.join(); await hospital.poll(); await hospital.$('voice-start').emit('click');
+  assert.equal(hospital.speeches[0].continuous, false);
+  hospital.speeches[0].result('병원 채팅 보고', true); hospital.speeches[0].onend(); await settle();
+  const hospitalPost = hospital.calls.find(call => call.url.endsWith('/messages'));
+  assert.equal(hospitalPost.body.body, '병원 채팅 보고');
+  assert.equal(hospitalPost.body.hospital_session_id, 7);
+
+  const h = harness({restored: true}); await settle();
+  h.type('기존 초안'); await h.$('voice-start').emit('click');
+  assert.equal(h.speeches[0].continuous, true);
+  h.speeches[0].result('추가 내용', true); h.speeches[0].onend(); await settle();
+  assert.equal(h.$('workspace').dataset.voice, 'idle');
+  assert.equal(h.$('message').value, '기존 초안 추가 내용');
+  assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 0);
+  await h.submit();
+  assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 1);
+});
+
+test('spoken stop words submit without the command, while matching word fragments do not', async () => {
+  for (const word of ['완료', '그만']) {
+    const h = harness({restored: true}); await settle();
     await h.$('voice-start').emit('click');
     const speech = h.speeches[0];
-    assert.equal(speech.continuous, false);
-    speech.result('호흡 정상', true);
-    assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 0);
+    speech.result('환자 상태 정상 ' + word, true);
+    assert.equal(speech.stopped, true);
     speech.onend(); await settle();
-    const requests = h.calls.filter(call => call.url.endsWith('/messages'));
-    assert.equal(requests.length, 1);
-    assert.equal(requests[0].body.body, '호흡 정상');
-    assert.equal(requests[0].body.hospital_session_id, hospital ? 7 : null);
-    speech.onend(); await settle();
-    assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 1);
+    const request = h.calls.find(call => call.url.endsWith('/messages'));
+    assert.equal(request.body.body, '환자 상태 정상');
   }
+  const fragment = harness({restored: true}); await settle();
+  await fragment.$('voice-start').emit('click');
+  fragment.speeches[0].result('그만큼 아픕니다', true);
+  assert.equal(fragment.speeches[0].stopped, undefined);
+  assert.equal(fragment.calls.filter(call => call.url.endsWith('/messages')).length, 0);
+  fragment.speeches[0].onend(); await settle();
+  assert.equal(fragment.calls.find(call => call.url.endsWith('/messages')).body.body, '그만큼 아픕니다');
+});
+
+test('empty stop command sends nothing, spoken stop commands submit drafts, and manual stop stays manual', async () => {
+  const command = harness({restored: true}); await settle();
+  await command.$('voice-start').emit('click');
+  command.speeches[0].result('완료', true); command.speeches[0].onend(); await settle();
+  assert.equal(command.calls.filter(call => call.url.endsWith('/messages')).length, 0);
+  const draft = harness({restored: true}); await settle();
+  draft.type('기존 초안'); await draft.$('voice-start').emit('click');
+  const speech = draft.speeches[0];
+  speech.result('추가 내용 그만', true);
+  assert.equal(speech.stopped, true);
+  speech.onend(); await settle();
+  const requests = draft.calls.filter(call => call.url.endsWith('/messages'));
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].body.body, '기존 초안 추가 내용');
+  speech.onend(); await settle();
+  assert.equal(draft.calls.filter(call => call.url.endsWith('/messages')).length, 1);
+
+  const manual = harness({restored: true}); await settle();
+  manual.type('기존 초안'); await manual.$('voice-start').emit('click');
+  manual.speeches[0].result('추가 내용', true);
+  await manual.$('voice-stop').emit('click');
+  manual.speeches[0].onend(); await settle();
+  assert.equal(manual.calls.filter(call => call.url.endsWith('/messages')).length, 0);
+  assert.equal(manual.$('message').value, '기존 초안 추가 내용');
 });
 
 test('empty or unresolved speech and cancelled sessions never auto-submit', async () => {
@@ -764,8 +817,8 @@ test('empty or unresolved speech and cancelled sessions never auto-submit', asyn
   }
 });
 
-test('voice preserves typed draft, ignores interim results, deduplicates finals and requires explicit send', async () => {
-  const h = harness(); await settle(); h.type('직접 입력한 원문.');
+test('voice preserves typed draft, ignores interim results, deduplicates finals and keeps manual send', async () => {
+  const h = harness({restored: true}); await settle(); h.type('직접 입력한 원문.');
   await h.$('voice-start').emit('click'); const speech = h.speeches[0];
   assert.equal(speech.lang, 'ko-KR'); assert.equal(h.$('message').disabled, true); assert.equal(h.$('send').disabled, true);
   speech.result('중간 결과', false); assert.equal(h.$('message').value, '직접 입력한 원문.');
@@ -774,6 +827,10 @@ test('voice preserves typed draft, ignores interim results, deduplicates finals 
   assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 0);
   await h.$('voice-stop').emit('click'); assert.equal(speech.stopped, true);
   speech.onend(); assert.equal(h.$('message').disabled, false); assert.equal(h.$('voice-interim').hidden, true);
+  assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 0);
+  await h.submit();
+  await settle();
+  assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 1);
   await h.submit(); assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 1);
 });
 
@@ -834,7 +891,10 @@ test('contact requests use the confirmed destination and stay out of the shared 
   assert.match(h.$('hospital-contact').textContent, /아직 없습니다/);
   h.join(); await h.poll();
   assert.equal(h.$('hospital-contact').hidden, true);
-  h.type('목적지에 전화 걸어 주세요'); await h.submit();
+  const phoneRequest = '목적지에 전화 걸어 주세요';
+  h.type(phoneRequest);
+  await h.document.emit('quick119:speech-final', {text: phoneRequest, alternatives: ['병원에 전화하지 마'], submit: false});
+  await h.submit();
   assert.match(h.$('hospital-contact').textContent, /가상 병원 H01/);
   assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 0);
 });

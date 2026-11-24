@@ -100,10 +100,3 @@ def analyze(text, alternatives, parse, *, allowed_fields=None, existing_fields=(
                   candidates=candidates, disputed_symptoms=disputed_symptoms,
                   coverage='provided_hypotheses_only', limitations=list(LIMITATIONS))
     return result, report
-
-
-def blocked_command(text, alternatives):
-    alternatives = validate(text, alternatives)
-    return dict(revision=REVISION, status='command_blocked', alternatives_count=len(alternatives),
-                disputed_fields=[], candidates=[], disputed_symptoms=[], coverage='provided_hypotheses_only',
-                limitations=list(LIMITATIONS) + ['Command execution is blocked when a recognition context payload is supplied.'])
