@@ -25,12 +25,24 @@
     const match = target.exec(phrase);
     return !!match && call.test(phrase.slice(match[0].length));
   }
+  // 이송 화면 명령: 화면 전환과 상태 읽기만 한다. 문의·목적지 확정·출발은 실행하지 않고 화면 버튼으로만 한다.
+  const end = '(?:줘|주세요|줄래요?|주실래요|주시겠어요|해줘|해주세요)?';
+  const transportCommands = [
+    ['map', new RegExp(`^(?:(?:지도|경로|길안내|내비(?:게이션)?)(?:을|를|으로|로|화면으로|화면)?(?:보여|띄워|열어|켜|바꿔|전환해)${end}|지도(?:로|화면|화면으로)?)$`)],
+    ['chat', new RegExp(`^(?:(?:채팅|대화|메시지)(?:을|를|으로|로|화면으로|화면)?(?:보여|띄워|열어|바꿔|전환해|돌아가)${end}|(?:채팅|대화)(?:으로|로|화면으로)(?:돌아가)?)$`)],
+    ['eta', new RegExp(`^(?:(?:병원|목적지)?(?:까지)?(?:도착(?:까지)?)?(?:얼마나|몇분|시간얼마나)(?:더)?(?:남았|걸려|걸리)(?:어|어요|나요|니|지)?|(?:남은|도착)(?:시간|거리)(?:알려|말해)?${end}|언제도착(?:해|해요|하나요|하지)?)$`)],
+    ['status', new RegExp(`^(?:(?:문의|병원|수용)(?:상태|현황|진행상황|결과)(?:알려|말해|보여)?${end}|(?:어느|어떤)병원(?:에서|이)?(?:답|회신|응답|수용)(?:이)?(?:왔|했|됐)(?:어|어요|나요|니)?)$`)],
+  ];
+  function transportCommand(text) {
+    const phrase = String(text || '').trim().replace(/\s+/g, '').replace(/[.!?]+$/, '').replace(/^(?:지금|이제|그럼)/, '');
+    return transportCommands.find(([, pattern]) => pattern.test(phrase))?.[0] || null;
+  }
   function dialNumber(phone) {
     const number = String(phone || '').replace(/[\s()-]/g, '');
     return /^(?:0|\+82)(?:2\d{7,8}|[3-6]\d{8,9}|70\d{8})$/.test(number) ? number : '';
   }
 
-  window.Quick119Intake = {isHospitalCall, dialNumber, bind({$, api, path, uuid, canEdit, search, error, showItems, reports}) {
+  window.Quick119Intake = {isHospitalCall, transportCommand, dialNumber, bind({$, api, path, uuid, canEdit, search, error, showItems, reports}) {
     const panel = $('command-panel');
     if (!panel) return null;
     let draft, loading, intent, reviewed, posting = false, followup = null, answering = null;

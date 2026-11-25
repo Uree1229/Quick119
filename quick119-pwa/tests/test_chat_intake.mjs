@@ -920,6 +920,36 @@ test('contact requests use the confirmed destination and stay out of the shared 
   assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 0);
 });
 
+test('transport commands switch the view or answer locally and never post to the shared conversation', async () => {
+  const h = harness(); await settle();
+  const {transportCommand} = h.window.Quick119Intake;
+  const expected = {'지도 보여 줘': 'map', '지도로': 'map', '경로 화면 띄워줘': 'map', '채팅으로': 'chat', '대화 화면으로 돌아가': 'chat',
+    '남은 시간 알려줘': 'eta', '언제 도착해?': 'eta', '병원까지 얼마나 남았어': 'eta', '문의 상태 알려줘': 'status', '어느 병원에서 답 왔어?': 'status'};
+  for (const [phrase, kind] of Object.entries(expected)) assert.equal(transportCommand(phrase), kind, phrase);
+  for (const phrase of ['지도 없이 갑니다', '채팅 잘 됩니다', '남은 시간 동안 산소 투여 중', '병원 상태가 안 좋대요', '환자 상태 알려드립니다', '5분 남았습니다'])
+    assert.equal(transportCommand(phrase), null, phrase);
+
+  h.type('지도 보여 줘'); await h.submit();
+  assert.equal(h.$('gps').hidden, false); assert.equal(h.$('chat').hidden, true);
+  h.type('채팅으로'); await h.submit();
+  assert.equal(h.$('gps').hidden, true); assert.equal(h.$('chat').hidden, false);
+  h.type('남은 시간 알려줘'); await h.submit();
+  assert.match(h.$('hospital-contact').textContent, /목적지가 아직 확정되지 않았습니다/);
+  h.type('문의 상태 알려줘'); await h.submit();
+  assert.match(h.$('hospital-contact').textContent, /아직 보낸 병원 문의가 없습니다/);
+  h.state.inquiries.push({id: 41, hospital_id: 'H01', hospital_name: '가상 병원 H01', state: 'ACCEPTED', usable: true},
+    {id: 42, hospital_id: 'H02', hospital_name: '가상 병원 H02', state: 'PENDING', usable: false});
+  h.join(); h.state.patient = {id: 'Q119-TEST-x', state: 'IN_TRANSIT', eta_at: Math.floor(Date.now() / 1000) + 9 * 60};
+  await h.poll();
+  h.type('문의 상태 알려줘'); await h.submit();
+  assert.equal(h.$('hospital-contact').textContent, '가상 병원 H01 수용 가능 응답, 가상 병원 H02 수용 문의 중.');
+  h.type('언제 도착해'); await h.submit();
+  assert.match(h.$('hospital-contact').textContent, /^가상 병원 H01까지 약 9분 · .+ 도착 예정입니다\.$/);
+  assert.equal(h.$('hospital-contact').hidden, false);
+  assert.equal(h.$('message').value, '');
+  assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 0, '명령은 대화로 보내지 않음');
+});
+
 test('typing mode follows the focused composer and the keyboard height, with hysteresis', async () => {
   const h = harness({viewport: true}); await settle();
   const vv = h.window.visualViewport, root = h.$('workspace'), style = h.document.documentElement.style;
