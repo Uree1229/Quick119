@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {buildThreads,threadStatus,summaryFields,acceptBlock,inquiryLog,chatLog,compactChatLog,actionCount,inquiryStage,needsReview,
-  etaLabel,patientTitle,severityKey,chatSummary,threadBadge,SEVERITY,DECLINE_REASONS,MAX_CLOSED} from '../../hospital-ui/panel-state.mjs';
+  etaLabel,patientTitle,severityKey,chatSummary,threadBadge,SEVERITY,DECLINE_REASONS,MAX_CLOSED,vitalsText,QUICK_REPLIES} from '../../hospital-ui/panel-state.mjs';
 
 const NOW=1000;
 const patient=(id,extra={})=>({id,age:60,symptoms:'흉통',priority_source:'expert',effective_priority:2,resource_demands:{ed_bed:1},
@@ -132,6 +132,28 @@ test('의식·호흡 코드값은 한글로 보여 주고, 나쁜 상태는 눈�
   assert.deepEqual(summaryFields(patient('P1',{consciousness:'unknown',breathing:'unknown',resource_demands:{}}),null),[]);
 });
 
+test('요약 카드에 구급대가 확인한 활력징후와 증상 시작 시각을 보인다',()=>{
+  const p=patient('P1',{resource_demands:{},onset_at:Date.UTC(2026,10,23,5,6)/1000,
+    extra:{vitals:{sbp:150,dbp:90,hr:110,spo2:94,temp:36.8,rr:22,glucose:129,nrs:5}}});
+  assert.equal(vitalsText(p),'혈압 150/90 · 맥박 110 · 산소포화도 94% · 체온 36.8℃ · 호흡수 22 · 혈당 129');
+  const fields=summaryFields(p,null);
+  assert.deepEqual(fields.map(f=>f.label),['활력징후','증상 시작']);
+  assert.equal(fields[0].wide,true,'한 줄 전체를 쓴다');
+  assert.match(fields[1].value,/\d{1,2}:06/);
+  assert.equal(vitalsText(patient('P1',{extra:{vitals:{sbp:100,hr:0}}})),'수축기 100 · 맥박 0','0도 값이고, 이완기가 없으면 수축기만');
+  assert.equal(vitalsText(patient('P1',{extra:{vitals:{}}})),'');
+  assert.equal(vitalsText(patient('P1',{extra:null})),'');
+  assert.deepEqual(summaryFields(patient('P1',{resource_demands:{},extra:{vitals:{}}}),null),[],'값이 없으면 칸을 만들지 않는다');
+});
+
+test('빠른 답장은 입력칸에 넣기만 하고 보내지 않는다',()=>{
+  assert.ok(QUICK_REPLIES.length>=3&&QUICK_REPLIES.every(t=>typeof t==='string'&&t.length<=30));
+  const panel=readFileSync(new URL('../../hospital-ui/panel.mjs',import.meta.url),'utf8');
+  const chip=panel.slice(panel.indexOf("class: 'qp-quick'"),panel.indexOf("class: 'qp-quick'")+400);
+  assert.match(chip,/\$\('message'\)\.value = text/);
+  assert.doesNotMatch(chip,/sendChat|respond\(|decide\(/,'누르면 바로 보내지 않음');
+});
+
 test('목록의 중증도 구분과 배지: 답할 일 1건에 안 읽은 구급대 메시지를 더한다',()=>{
   assert.deepEqual([4,3,2,1].map(n=>severityKey(patient('P1',{effective_priority:n}))),['urgent','severe','moderate','mild']);
   assert.equal(severityKey(patient('P1',{priority_source:'unknown',effective_priority:4})),'unknown','확인되지 않은 중증도는 색으로 단정하지 않는다');
@@ -151,4 +173,23 @@ test('목록의 중증도 구분과 배지: 답할 일 1건에 안 읽은 구급
   assert.equal(threadBadge(fresh,NOW),1);
   assert.equal(threadBadge(moving,NOW,2),2);
   assert.equal(threadBadge(moving,NOW),0);
+});
+
+test('구급대에게 하는 안내는 병원 대화에서 빼고, 진행 기록은 접고, 목적지 확정은 병원 입장 문구로 보인다',()=>{
+  const items=[
+    {kind:'system',type:'patient_created',text:'시스템과 구급대의 현장 접수를 시작했습니다. 확인한 환자 상태와 활력징후를 남겨 주세요.',id:'e1',order_key:[1]},
+    {kind:'message',sender_role:'patient',body:'62세 남성 흉통',id:'m1',order_key:[2]},
+    {kind:'system',type:'intake_report_received',text:'현장 보고가 이송 기록에 저장됐습니다.',id:'r1',order_key:[2,0,0,1]},
+    {kind:'system',type:'inquiry_workflow_batch',text:'후보 3곳에 문의했습니다.',id:'e2',order_key:[3]},
+    {kind:'system',type:'destination_confirmed',text:'가상 병원으로 목적지가 확정됐습니다. 병원이 대화에 참여했습니다.',id:'e3',order_key:[4]},
+    {kind:'system',type:'transport_position_updated',text:'이송자의 위치 관측이 갱신됐습니다.',id:'e4',order_key:[5]},
+    {kind:'system',type:'adjustment_needed',text:'조정을 요청했습니다.',id:'e5',order_key:[6]},
+  ];
+  const result=compactChatLog(chatLog(items));
+  assert.deepEqual(result.map(e=>e.kind),['crew','routine-group','notice','routine-group','notice']);
+  const text=JSON.stringify(result);
+  assert.doesNotMatch(text,/현장 접수를 시작했습니다|이송 기록에 저장됐습니다/,'구급대 안내는 보이지 않음');
+  assert.equal(result[1].entries[0].text,'후보 3곳에 문의했습니다.');
+  assert.equal(result[2].text,'구급대가 우리 병원으로 목적지를 확정했습니다.');
+  assert.equal(result[4].text,'조정을 요청했습니다.','행동이 필요한 알림은 접지 않음');
 });

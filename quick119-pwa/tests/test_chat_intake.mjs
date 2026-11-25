@@ -101,7 +101,7 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
   }
   if (speech) window.SpeechRecognition = Speech;
   const state = {session: null, failMessageOnce: false, beforeConversation: null, conversationDeleted: false,
-    messages: [], inquiries: [], receipts: new Map()};
+    messages: [], inquiries: [], receipts: new Map(), patient: null};
   const listedPatients = patientCases ?? (restored
     ? [{id: patientId, age: null, stage: '접수 중', active: true, inquiries: []}]
     : []);
@@ -111,7 +111,7 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
     return {conversation: {state: 'OPEN'}, can_send: true, active_hospital_session: state.session,
       participants: [{id: 'system', role: 'system', name: '시스템'}, {id: 'crew', role: 'crew', name: '구급대'},
         ...(state.session ? [{id: 'hospital:H01', role: 'hospital', name: '가상 병원 H01', hospital_session_id: state.session.id}] : [])],
-      inquiries: state.inquiries, ...(intake ? {intake_commands: true} : {}),
+      inquiries: state.inquiries, ...(state.patient ? {patient: state.patient} : {}), ...(intake ? {intake_commands: true} : {}),
       items: [welcome, ...state.messages], cursors: {event_id: 1, message_id: state.receipts.size}, has_more: false};
   }
   async function fetch(url, options) {
@@ -161,6 +161,7 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
       if (state.failMessageOnce) { state.failMessageOnce = false; throw new Error('response lost after save'); }
       return response(receipt);
     }
+    if (url.endsWith('/transport-position')) return response({id: patientId, lat: body.lat, lon: body.lon});
     if (url.endsWith('/change-destination')) {
       const inquiry = state.inquiries.find(item => item.id === body.inquiry_id);
       if (!inquiry) throw new Error('Unknown destination inquiry');
@@ -919,6 +920,36 @@ test('contact requests use the confirmed destination and stay out of the shared 
   assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 0);
 });
 
+test('transport commands switch the view or answer locally and never post to the shared conversation', async () => {
+  const h = harness(); await settle();
+  const {transportCommand} = h.window.Quick119Intake;
+  const expected = {'지도 보여 줘': 'map', '지도로': 'map', '경로 화면 띄워줘': 'map', '채팅으로': 'chat', '대화 화면으로 돌아가': 'chat',
+    '남은 시간 알려줘': 'eta', '언제 도착해?': 'eta', '병원까지 얼마나 남았어': 'eta', '문의 상태 알려줘': 'status', '어느 병원에서 답 왔어?': 'status'};
+  for (const [phrase, kind] of Object.entries(expected)) assert.equal(transportCommand(phrase), kind, phrase);
+  for (const phrase of ['지도 없이 갑니다', '채팅 잘 됩니다', '남은 시간 동안 산소 투여 중', '병원 상태가 안 좋대요', '환자 상태 알려드립니다', '5분 남았습니다'])
+    assert.equal(transportCommand(phrase), null, phrase);
+
+  h.type('지도 보여 줘'); await h.submit();
+  assert.equal(h.$('gps').hidden, false); assert.equal(h.$('chat').hidden, true);
+  h.type('채팅으로'); await h.submit();
+  assert.equal(h.$('gps').hidden, true); assert.equal(h.$('chat').hidden, false);
+  h.type('남은 시간 알려줘'); await h.submit();
+  assert.match(h.$('hospital-contact').textContent, /목적지가 아직 확정되지 않았습니다/);
+  h.type('문의 상태 알려줘'); await h.submit();
+  assert.match(h.$('hospital-contact').textContent, /아직 보낸 병원 문의가 없습니다/);
+  h.state.inquiries.push({id: 41, hospital_id: 'H01', hospital_name: '가상 병원 H01', state: 'ACCEPTED', usable: true},
+    {id: 42, hospital_id: 'H02', hospital_name: '가상 병원 H02', state: 'PENDING', usable: false});
+  h.join(); h.state.patient = {id: 'Q119-TEST-x', state: 'IN_TRANSIT', eta_at: Math.floor(Date.now() / 1000) + 9 * 60};
+  await h.poll();
+  h.type('문의 상태 알려줘'); await h.submit();
+  assert.equal(h.$('hospital-contact').textContent, '가상 병원 H01 수용 가능 응답, 가상 병원 H02 수용 문의 중.');
+  h.type('언제 도착해'); await h.submit();
+  assert.match(h.$('hospital-contact').textContent, /^가상 병원 H01까지 약 9분 · .+ 도착 예정입니다\.$/);
+  assert.equal(h.$('hospital-contact').hidden, false);
+  assert.equal(h.$('message').value, '');
+  assert.equal(h.calls.filter(call => call.url.endsWith('/messages')).length, 0, '명령은 대화로 보내지 않음');
+});
+
 test('typing mode follows the focused composer and the keyboard height, with hysteresis', async () => {
   const h = harness({viewport: true}); await settle();
   const vv = h.window.visualViewport, root = h.$('workspace'), style = h.document.documentElement.style;
@@ -1010,4 +1041,32 @@ test('a missed refresh blocks sending but keeps the draft editable', async () =>
   assert.equal(h.$('send').disabled, true); assert.equal(h.$('message').disabled, false);
   assert.equal(h.$('message').value, '작성 중인 보고');
   await h.poll(); assert.equal(h.$('send').disabled, false);
+});
+
+test('GPS fixes during an active transport become a throttled transport-position update', async () => {
+  const h = harness(); await settle();
+  const fix = (lat, lon) => h.document.dispatchEvent({type: 'quick119:gps-fix', detail: {lat, lon, accuracy: 10, timestamp: Date.now()}});
+  const patches = () => h.calls.filter(call => call.method === 'PATCH' && call.url.endsWith('/transport-position'));
+  fix(37.5, 126.96); await settle();
+  assert.equal(patches().length, 0, '목적지 확정 전에는 보내지 않음');
+  h.join(); h.state.patient = {id: 'Q119-TEST-x', state: 'CONFIRMED'}; await h.poll();
+  fix(37.5, 126.96); await settle();
+  fix(37.502, 126.962); await settle();
+  assert.deepEqual(patches().map(call => call.body), [{lat: 37.5, lon: 126.96}], '15초 안의 두 번째 위치는 보내지 않음');
+  const realNow = Date.now, start = realNow();
+  try {
+    Date.now = () => start + 20000;
+    fix(37.50001, 126.96001); await settle();
+    assert.equal(patches().length, 1, '20초가 지나도 30m 안이면 보내지 않음');
+    fix(37.502, 126.962); await settle();
+    assert.equal(patches().length, 2, '30m 넘게 움직이면 보냄');
+    Date.now = () => start + 90000;
+    fix(37.502, 126.962); await settle();
+    assert.equal(patches().length, 3, '1분이 지나면 제자리여도 보냄');
+    h.state.patient = {id: 'Q119-TEST-x', state: 'ARRIVED'}; await h.poll();
+    Date.now = () => start + 200000;
+    fix(37.51, 126.97); await settle();
+    assert.equal(patches().length, 3, '도착 뒤에는 보내지 않음');
+  } finally { Date.now = realNow; }
+  assert.ok(patches().every(call => /\/api\/patients\/Q119-TEST-[^/]+\/transport-position$/.test(call.url)));
 });

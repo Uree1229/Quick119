@@ -779,6 +779,33 @@
     box.hidden = false;
     if ($('intake-feedback')) $('intake-feedback').hidden = true;
   }
+  // 이송 화면 명령의 답은 서버에 보내지 않고, 연락처 칸에 보여 주고 소리로 읽는다.
+  function showLocalAnswer(text) {
+    const box = $('hospital-contact');
+    if (box) { box.replaceChildren(); box.textContent = text; box.hidden = false; contactSession = sessionId(); }
+    if ($('intake-feedback')) $('intake-feedback').hidden = true;
+    speak(text);
+  }
+  function etaAnswer() {
+    const patient = snapshot?.patient, name = snapshot?.active_hospital_session?.hospital_name;
+    if (!patient || !['CONFIRMED', 'IN_TRANSIT'].includes(patient.state) || !name) return '목적지가 아직 확정되지 않았습니다.';
+    if (patient.state === 'CONFIRMED' || !Number.isFinite(patient.eta_at)) return `${name} · 아직 출발 전이라 도착 예정 시간이 없습니다.`;
+    const minutes = Math.max(0, Math.ceil((patient.eta_at * 1000 - Date.now()) / 60000));
+    const at = new Date(patient.eta_at * 1000).toLocaleTimeString('ko-KR', {hour: 'numeric', minute: '2-digit'});
+    return `${name}까지 약 ${minutes}분 · ${at} 도착 예정입니다.`;
+  }
+  function statusAnswer() {
+    const inquiries = snapshot?.inquiries || [];
+    if (!inquiries.length) return '아직 보낸 병원 문의가 없습니다.';
+    return inquiries.map(q => `${q.hospital_name || q.hospital_id} ${inquiryLabels[q.state] || q.state}`).join(', ') + '.';
+  }
+  function runTransportCommand(kind) {
+    if (kind === 'map' || kind === 'chat') {
+      document.dispatchEvent(new CustomEvent('quick119:show-view', {detail: {view: kind === 'map' ? 'gps' : 'chat'}}));
+      return;
+    }
+    showLocalAnswer(kind === 'eta' ? etaAnswer() : statusAnswer());
+  }
   function controls() {
     if ($('hospital-contact') && (!fresh || !active() || contactSession !== sessionId())) $('hospital-contact').hidden = true;
     const staleDraft = draftSession !== undefined && draftSession !== sessionId() && !!$('message').value.trim();
@@ -1222,6 +1249,13 @@
       if (ticket !== epoch || !active()) throw new Error('대화 연결을 다시 확인한 뒤 전송하세요.');
       if (!pending) {
         if (!canCompose() || sessionId() !== session) throw new Error('대화 참여자가 변경됐습니다. 내용을 확인한 뒤 다시 전송하세요.');
+        const local = window.Quick119Intake?.transportCommand?.(composed);
+        if (local) {
+          // Like the other spoken commands, the leading recognition result decides. These only switch the view or read a status.
+          runTransportCommand(local);
+          draftSession = undefined; recognition = null; $('message').value = '';
+          return;
+        }
         if (window.Quick119Intake?.isHospitalCall(composed)) {
           if (session && !hospitals.length) {
             await loadHospitals();
@@ -1272,6 +1306,32 @@
   document.addEventListener('quick119:view', event => {
     if (chatVisible()) requestAnimationFrame(() => { if (atBottom()) markRead(); });
     badge();
+  });
+  // 실시간 안내 중 걸러진 GPS 위치를 확정·이송 중 환자의 위치로 서버에 남긴다. 병원 패널의 '위치 조회'가 이 값을 보여 준다.
+  // 15초보다 자주 보내지 않고, 30m 넘게 움직였거나 1분이 지났을 때만 보낸다. 실패해도 안내는 계속하고 다음 위치에서 다시 보낸다.
+  const POSITION = {MIN_MS: 15000, MIN_MOVE_M: 30, MAX_MS: 60000};
+  let positionSent = null, positionSending = false;
+  function metersBetween(a, b) {
+    const rad = Math.PI / 180, h = Math.sin((b.lat - a.lat) * rad / 2) ** 2 +
+      Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin((b.lon - a.lon) * rad / 2) ** 2;
+    return 2 * 6371000 * Math.asin(Math.sqrt(h));
+  }
+  function shouldSendPosition(fix, now) {
+    if (!active() || positionSending || !fix || !Number.isFinite(fix.lat) || !Number.isFinite(fix.lon)) return false;
+    if (!['CONFIRMED', 'IN_TRANSIT'].includes(snapshot?.patient?.state)) return false;
+    if (!positionSent || positionSent.pid !== pid) return true;
+    const waited = now - positionSent.at;
+    return waited >= POSITION.MIN_MS && (waited >= POSITION.MAX_MS || metersBetween(positionSent, fix) >= POSITION.MIN_MOVE_M);
+  }
+  document.addEventListener('quick119:gps-fix', event => {
+    const fix = event.detail, now = Date.now();
+    if (!shouldSendPosition(fix, now)) return;
+    const target = pid;
+    positionSending = true;
+    void api(path() + '/transport-position', {lat: fix.lat, lon: fix.lon}, 'PATCH')
+      .then(() => { if (target === pid) positionSent = {pid: target, lat: fix.lat, lon: fix.lon, at: now}; })
+      .catch(() => {})
+      .finally(() => { positionSending = false; });
   });
   document.addEventListener('quick119:voice-state', event => {
     voiceListening = !!event.detail.listening;

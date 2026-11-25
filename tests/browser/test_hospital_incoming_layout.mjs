@@ -79,7 +79,7 @@ test('수용 유지·수용 취소 요청·도착 확인은 대화 옆 처리 �
   const page=await open();
   const actions=page.el('incomingActions').innerHTML,detail=page.el('incomingDetail').innerHTML;
   for(const name of ['keep','adjust','arrive'])assert.match(actions,new RegExp(`data-patient-action="${name}"`));
-  assert.match(actions,/id="reviewNote"/);assert.match(actions,/data-patient-action="adjust"[^>]*>수용 취소 요청<\/button>/);assert.match(actions,/이송자가 다른 병원의 수용 응답을 확인하고 새 목적지를 확정할 때까지 목적지는 이 병원으로 유지됩니다/);
+  assert.match(actions,/id="reviewNote"/);assert.match(actions,/data-patient-action="adjust"[^>]*>수용 취소 요청<\/button>/);assert.match(actions,/새 목적지가 확정될 때까지 목적지는 이 병원으로 유지됩니다/);
   assert.doesNotMatch(detail,/data-patient-action|id="reviewNote"/,'상세에는 처리 버튼이 없음');
   assert.equal(page.el('chatPatient').textContent,'· 12세 · 복통');
   assert.equal(page.el('hospitalChat').hidden,false);

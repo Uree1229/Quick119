@@ -51,7 +51,9 @@ async function load() {
     $('eta').textContent = data.state === 'IN_TRANSIT' && Number.isFinite(data.eta_at) ? clock(data.eta_at) : '—';
     if (p && d && Number.isFinite(p.lat) && Number.isFinite(p.lon) &&
         Number.isFinite(d.lat) && Number.isFinite(d.lon)) draw(p, d);
-    $('updated').textContent = Number.isFinite(data.fetched_at) ? `${clock(data.fetched_at)} 기준` : '방금 불러옴';
+    // 서버에 남은 구급대 위치의 시각을 보인다. 아직 GPS가 오지 않았으면 접수 때 위치라는 것을 밝힌다.
+    $('updated').textContent = p && Number.isFinite(p.updated_at) ? `구급대 위치 ${clock(p.updated_at)} 기준`
+      : p ? '접수 위치 · 실시간 위치 수신 전' : '구급대 위치 없음';
   } catch (error) {
     console.error('위치 조회 실패:', error);
     showError('조회 실패');
