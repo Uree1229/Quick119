@@ -1273,6 +1273,32 @@
     if (chatVisible()) requestAnimationFrame(() => { if (atBottom()) markRead(); });
     badge();
   });
+  // 실시간 안내 중 걸러진 GPS 위치를 확정·이송 중 환자의 위치로 서버에 남긴다. 병원 패널의 '위치 조회'가 이 값을 보여 준다.
+  // 15초보다 자주 보내지 않고, 30m 넘게 움직였거나 1분이 지났을 때만 보낸다. 실패해도 안내는 계속하고 다음 위치에서 다시 보낸다.
+  const POSITION = {MIN_MS: 15000, MIN_MOVE_M: 30, MAX_MS: 60000};
+  let positionSent = null, positionSending = false;
+  function metersBetween(a, b) {
+    const rad = Math.PI / 180, h = Math.sin((b.lat - a.lat) * rad / 2) ** 2 +
+      Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin((b.lon - a.lon) * rad / 2) ** 2;
+    return 2 * 6371000 * Math.asin(Math.sqrt(h));
+  }
+  function shouldSendPosition(fix, now) {
+    if (!active() || positionSending || !fix || !Number.isFinite(fix.lat) || !Number.isFinite(fix.lon)) return false;
+    if (!['CONFIRMED', 'IN_TRANSIT'].includes(snapshot?.patient?.state)) return false;
+    if (!positionSent || positionSent.pid !== pid) return true;
+    const waited = now - positionSent.at;
+    return waited >= POSITION.MIN_MS && (waited >= POSITION.MAX_MS || metersBetween(positionSent, fix) >= POSITION.MIN_MOVE_M);
+  }
+  document.addEventListener('quick119:gps-fix', event => {
+    const fix = event.detail, now = Date.now();
+    if (!shouldSendPosition(fix, now)) return;
+    const target = pid;
+    positionSending = true;
+    void api(path() + '/transport-position', {lat: fix.lat, lon: fix.lon}, 'PATCH')
+      .then(() => { if (target === pid) positionSent = {pid: target, lat: fix.lat, lon: fix.lon, at: now}; })
+      .catch(() => {})
+      .finally(() => { positionSending = false; });
+  });
   document.addEventListener('quick119:voice-state', event => {
     voiceListening = !!event.detail.listening;
     if (voiceListening) stopSpeech();

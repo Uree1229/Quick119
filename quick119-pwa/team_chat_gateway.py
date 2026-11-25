@@ -169,6 +169,7 @@ for method, path in (
     ("POST", "/api/patients/{pid}/confirm"),
     ("POST", "/api/patients/{pid}/change-destination"),
     ("POST", "/api/patients/{pid}/depart"),
+    ("PATCH", "/api/patients/{pid}/transport-position"),
     ("GET", "/api/patients/{pid}/conversation"),
     ("POST", "/api/patients/{pid}/messages"),
     ("POST", "/api/hospitals/{hid}/patients/{pid}/decision"),

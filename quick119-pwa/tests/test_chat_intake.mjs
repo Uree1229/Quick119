@@ -101,7 +101,7 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
   }
   if (speech) window.SpeechRecognition = Speech;
   const state = {session: null, failMessageOnce: false, beforeConversation: null, conversationDeleted: false,
-    messages: [], inquiries: [], receipts: new Map()};
+    messages: [], inquiries: [], receipts: new Map(), patient: null};
   const listedPatients = patientCases ?? (restored
     ? [{id: patientId, age: null, stage: '접수 중', active: true, inquiries: []}]
     : []);
@@ -111,7 +111,7 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
     return {conversation: {state: 'OPEN'}, can_send: true, active_hospital_session: state.session,
       participants: [{id: 'system', role: 'system', name: '시스템'}, {id: 'crew', role: 'crew', name: '구급대'},
         ...(state.session ? [{id: 'hospital:H01', role: 'hospital', name: '가상 병원 H01', hospital_session_id: state.session.id}] : [])],
-      inquiries: state.inquiries, ...(intake ? {intake_commands: true} : {}),
+      inquiries: state.inquiries, ...(state.patient ? {patient: state.patient} : {}), ...(intake ? {intake_commands: true} : {}),
       items: [welcome, ...state.messages], cursors: {event_id: 1, message_id: state.receipts.size}, has_more: false};
   }
   async function fetch(url, options) {
@@ -161,6 +161,7 @@ function harness({restored = false, hospitalFailure = false, seoul = false, spee
       if (state.failMessageOnce) { state.failMessageOnce = false; throw new Error('response lost after save'); }
       return response(receipt);
     }
+    if (url.endsWith('/transport-position')) return response({id: patientId, lat: body.lat, lon: body.lon});
     if (url.endsWith('/change-destination')) {
       const inquiry = state.inquiries.find(item => item.id === body.inquiry_id);
       if (!inquiry) throw new Error('Unknown destination inquiry');
@@ -1010,4 +1011,32 @@ test('a missed refresh blocks sending but keeps the draft editable', async () =>
   assert.equal(h.$('send').disabled, true); assert.equal(h.$('message').disabled, false);
   assert.equal(h.$('message').value, '작성 중인 보고');
   await h.poll(); assert.equal(h.$('send').disabled, false);
+});
+
+test('GPS fixes during an active transport become a throttled transport-position update', async () => {
+  const h = harness(); await settle();
+  const fix = (lat, lon) => h.document.dispatchEvent({type: 'quick119:gps-fix', detail: {lat, lon, accuracy: 10, timestamp: Date.now()}});
+  const patches = () => h.calls.filter(call => call.method === 'PATCH' && call.url.endsWith('/transport-position'));
+  fix(37.5, 126.96); await settle();
+  assert.equal(patches().length, 0, '목적지 확정 전에는 보내지 않음');
+  h.join(); h.state.patient = {id: 'Q119-TEST-x', state: 'CONFIRMED'}; await h.poll();
+  fix(37.5, 126.96); await settle();
+  fix(37.502, 126.962); await settle();
+  assert.deepEqual(patches().map(call => call.body), [{lat: 37.5, lon: 126.96}], '15초 안의 두 번째 위치는 보내지 않음');
+  const realNow = Date.now, start = realNow();
+  try {
+    Date.now = () => start + 20000;
+    fix(37.50001, 126.96001); await settle();
+    assert.equal(patches().length, 1, '20초가 지나도 30m 안이면 보내지 않음');
+    fix(37.502, 126.962); await settle();
+    assert.equal(patches().length, 2, '30m 넘게 움직이면 보냄');
+    Date.now = () => start + 90000;
+    fix(37.502, 126.962); await settle();
+    assert.equal(patches().length, 3, '1분이 지나면 제자리여도 보냄');
+    h.state.patient = {id: 'Q119-TEST-x', state: 'ARRIVED'}; await h.poll();
+    Date.now = () => start + 200000;
+    fix(37.51, 126.97); await settle();
+    assert.equal(patches().length, 3, '도착 뒤에는 보내지 않음');
+  } finally { Date.now = realNow; }
+  assert.ok(patches().every(call => /\/api\/patients\/Q119-TEST-[^/]+\/transport-position$/.test(call.url)));
 });
