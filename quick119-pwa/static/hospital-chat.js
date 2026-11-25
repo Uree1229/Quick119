@@ -1251,10 +1251,7 @@
         if (!canCompose() || sessionId() !== session) throw new Error('대화 참여자가 변경됐습니다. 내용을 확인한 뒤 다시 전송하세요.');
         const local = window.Quick119Intake?.transportCommand?.(composed);
         if (local) {
-          if (recognition?.text === composed && recognition.alternatives?.some(alt => window.Quick119Intake.transportCommand(alt) !== local)) {
-            recognition = null;
-            throw new Error('명령의 인식 후보가 다릅니다. 내용을 확인한 뒤 다시 눌러 주세요.');
-          }
+          // Like the other spoken commands, the leading recognition result decides. These only switch the view or read a status.
           runTransportCommand(local);
           draftSession = undefined; recognition = null; $('message').value = '';
           return;
