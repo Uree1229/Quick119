@@ -102,6 +102,23 @@ export function needsReview(p) {
 }
 
 // 환자 요약 카드의 칸. 값이 없는 항목은 만들지 않는다(없는 정보를 지어내지 않는다).
+// 구급대가 확인한 활력징후를 한 줄로 보인다. 값이 없는 항목은 빼고, 숫자를 해석하거나 판정하지 않는다.
+const VITAL_PARTS = [
+  (v) => (v.sbp != null && v.dbp != null ? `혈압 ${v.sbp}/${v.dbp}` : v.sbp != null ? `수축기 ${v.sbp}` : null),
+  (v) => (v.hr != null ? `맥박 ${v.hr}` : null),
+  (v) => (v.spo2 != null ? `산소포화도 ${v.spo2}%` : null),
+  (v) => (v.temp != null ? `체온 ${v.temp}℃` : null),
+  (v) => (v.rr != null ? `호흡수 ${v.rr}` : null),
+  (v) => (v.glucose != null ? `혈당 ${v.glucose}` : null),
+];
+export function vitalsText(p) {
+  const v = p?.extra?.vitals;
+  if (!v || typeof v !== 'object') return '';
+  return VITAL_PARTS.map((part) => part(v)).filter(Boolean).join(' · ');
+}
+// 확정 후 대화에서 한 번 눌러 입력칸에 넣는 자주 쓰는 안내. 보내기는 담당자가 직접 누른다.
+export const QUICK_REPLIES = ['소생실로 오세요.', '처치실로 오세요.', '응급실 입구에서 기다리겠습니다.', '도착 5분 전에 연락 주세요.'];
+
 export function summaryFields(p, hospital) {
   const fields = [];
   // 서버 코드값을 구급대 화면과 같은 말로 보여 준다. '미확인'으로 온 값은 정보가 아니므로 칸을 만들지 않는다.
@@ -110,6 +127,11 @@ export function summaryFields(p, hospital) {
     if (!value || value === 'unknown') continue;
     const worse = value === 'impaired' || value === 'unresponsive' || value === 'abnormal' || value === 'absent';
     fields.push({ label, value: VITAL_WORDS[key][value] || value, ...(worse ? { tone: 'alert' } : {}) });
+  }
+  const vitals = vitalsText(p);
+  if (vitals) fields.push({ label: '활력징후', value: vitals, wide: true });
+  if (Number.isFinite(p.onset_at)) {
+    fields.push({ label: '증상 시작', value: new Date(p.onset_at * 1000).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' }) });
   }
   if (p.danger_signs?.length) fields.push({ label: '위험 징후', value: p.danger_signs.join(', '), tone: 'alert' });
   if (p.required_capabilities?.length) fields.push({ label: '필요 진료', value: p.required_capabilities.join(', ') });
